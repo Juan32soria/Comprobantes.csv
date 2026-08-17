@@ -21,9 +21,9 @@ Recibe **imágenes de comprobantes de pago colombianos** (fotos o capturas de pa
 | Dato | Ejemplo |
 |---|---|
 | 🏦 Banco o app | Bancolombia |
-| 🔢 Número de comprobante | 0000032700 |
-| 💳 Número de cuenta | 61373716463 |
-| 👤 Nombre del cliente | Miguel Angel Moreno |
+| 🔢 Número de comprobante | 154145150 |
+| 💳 Número de cuenta | 2440010654 |
+| 👤 Nombre del cliente | Julio Hernandez |
 | 💰 Valor del pago | $30.000 |
 | 📅 Fecha del pago | 2026-08-15 |
 
