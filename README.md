@@ -51,27 +51,45 @@ Funciona con el **plan gratuito** de Google Gemini:
 
 ## 🛠️ Instalación (solo la primera vez)
 
-### 1️⃣ Instalar Python
+### 🪟 En Windows
+
+#### 1️⃣ Instalar Python
 
 > 🐍 Descargar de [python.org/downloads](https://www.python.org/downloads/) e instalar.
 >
 > ⚠️ **MUY IMPORTANTE:** antes de dar clic en "Install Now", marcar la casilla **"Add Python to PATH"**.
 
-### 2️⃣ Instalar las dependencias
+#### 2️⃣ Instalar las dependencias
 
 > 📦 Doble clic en **`INSTALAR.bat`** y esperar a que termine. Solo se hace una vez.
 
-### 3️⃣ Obtener la clave de API (gratis, sin tarjeta de crédito)
+#### 3️⃣ Obtener la clave de API (gratis, sin tarjeta de crédito)
 
 > 🔑 1. Entrar a **https://aistudio.google.com/apikey** con una cuenta de Google (Gmail)
 > 2. Clic en **"Create API Key"**
 > 3. Copiar la clave (empieza con `AIza...`)
 
-### 4️⃣ Configurar la clave
+#### 4️⃣ Configurar la clave
 
 > ⚙️ Abrir **`config.txt`** con el Bloc de notas, reemplazar `PEGA_AQUI_TU_CLAVE` por la clave copiada, y **guardar**.
 >
 > 🔒 Esa clave es como una contraseña: **no compartirla** con nadie.
+
+### 🍎 En Mac (macOS)
+
+Mac ya trae Python instalado. Si no lo tiene, se descarga de [python.org/downloads](https://www.python.org/downloads/).
+
+> 1️⃣ Descargar o clonar el repositorio
+>
+> 2️⃣ Abrir **Terminal**, navegar a la carpeta del proyecto y ejecutar: `chmod +x *.sh *.command`
+>
+> 3️⃣ Doble clic en **`INSTALAR.command`** (o ejecutar `./INSTALAR.sh` en Terminal)
+>
+> 4️⃣ Obtener la API key gratis en [aistudio.google.com/apikey](https://aistudio.google.com/apikey) y pegarla en `config.txt`
+>
+> 5️⃣ Para uso diario: doble clic en **`ABRIR.command`** (interfaz gráfica) o **`PROCESAR.command`** (terminal)
+
+> 💡 **Nota:** en la primera ejecución Mac puede pedir autorización. Ir a **Configuración > Privacidad y Seguridad** > permitir la ejecución.
 
 ---
 
