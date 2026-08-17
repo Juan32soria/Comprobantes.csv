@@ -1,0 +1,9 @@
+config.txt
+__pycache__/
+*.pyc
+entrada/
+procesados/
+revision_manual/
+salida/
+test.py
+.env
