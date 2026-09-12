@@ -27,7 +27,7 @@ Recibe **imágenes de comprobantes de pago colombianos** (fotos o capturas de pa
 | 💰 Valor del pago | $30.000 |
 | 📅 Fecha del pago | 2026-08-15 |
 
-Todo queda guardado en un **archivo Excel con formato profesional**: `salida/comprobantes.xlsx` — con colores según el estado de cada comprobante y detección de pagos duplicados.
+Todo queda guardado en un **archivo Excel con formato profesional** (por defecto `salida/comprobantes.xlsx`, la ruta se puede cambiar en `config.txt`) — con colores según el estado de cada comprobante y detección de pagos duplicados.
 
 ---
 
@@ -71,7 +71,11 @@ Funciona con el **plan gratuito** de Google Gemini:
 
 #### 4️⃣ Configurar la clave
 
-> ⚙️ Abrir **`config.txt`** con el Bloc de notas, reemplazar `PEGA_AQUI_TU_CLAVE` por la clave copiada, y **guardar**.
+> ⚙️ Si no existe **`config.txt`**, hacer una copia de **`config.ejemplo.txt`** y renombrarla a `config.txt`.
+>
+> Abrir **`config.txt`** con el Bloc de notas, reemplazar `PEGA_AQUI_TU_CLAVE` por la clave copiada, y **guardar**.
+>
+> 📂 La línea `RUTA_EXCEL` indica dónde se guarda el Excel (por defecto `salida/comprobantes.xlsx`). Ver [Compartir el Excel entre varios PCs con Google Drive](#-compartir-el-excel-entre-varios-pcs-con-google-drive).
 >
 > 🔒 Esa clave es como una contraseña: **no compartirla** con nadie.
 
@@ -85,7 +89,7 @@ Mac ya trae Python instalado. Si no lo tiene, se descarga de [python.org/downloa
 >
 > 3️⃣ Doble clic en **`INSTALAR.command`** (o ejecutar `./INSTALAR.sh` en Terminal)
 >
-> 4️⃣ Obtener la API key gratis en [aistudio.google.com/apikey](https://aistudio.google.com/apikey) y pegarla en `config.txt`
+> 4️⃣ Copiar `config.ejemplo.txt` como `config.txt` (`cp config.ejemplo.txt config.txt`), obtener la API key gratis en [aistudio.google.com/apikey](https://aistudio.google.com/apikey) y pegarla en `config.txt`
 >
 > 5️⃣ Para uso diario: doble clic en **`ABRIR.command`** (interfaz gráfica) o **`PROCESAR.command`** (terminal)
 
@@ -111,7 +115,27 @@ Mac ya trae Python instalado. Si no lo tiene, se descarga de [python.org/downloa
 >
 > 2️⃣ Doble clic en **`PROCESAR.bat`**
 >
-> 3️⃣ Abrir **`salida/comprobantes.xlsx`** con Excel
+> 3️⃣ Abrir **`salida/comprobantes.xlsx`** con Excel (o la ruta configurada en `RUTA_EXCEL`)
+
+---
+
+## 📂 Compartir el Excel entre varios PCs con Google Drive
+
+Varios computadores pueden guardar sus comprobantes en **el mismo Excel** usando una carpeta compartida de Google Drive:
+
+> 1️⃣ Instalar **Google Drive para escritorio**: [google.com/intl/es/drive/download](https://www.google.com/intl/es/drive/download/)
+>
+> 2️⃣ Crear una carpeta en Google Drive (ej: **`Comprobantes`**) y **compartirla** con los demás usuarios
+>
+> 3️⃣ Abrir **`config.txt`** y cambiar `RUTA_EXCEL` por la ruta local de esa carpeta de Google Drive:
+>
+> 🪟 Windows: `RUTA_EXCEL=G:\Mi unidad\Comprobantes\comprobantes.xlsx`
+>
+> 🍎 Mac: `RUTA_EXCEL=/Users/tunombre/Google Drive/Mi unidad/Comprobantes/comprobantes.xlsx`
+>
+> 4️⃣ Listo — todos los PCs que apunten a la misma carpeta ven **el mismo Excel actualizado**. Cada comprobante se **agrega al final**, nunca se sobreescribe.
+
+> ⚠️ **Importante:** no abrir el Excel mientras se está procesando. Si está abierto, el programa avisa **"Cierra el archivo Excel y vuelve a intentar"** y la imagen se queda en la carpeta `entrada` para reintentar.
 
 ---
 
@@ -122,12 +146,13 @@ extractor-comprobantes/
 ├── ABRIR.bat              → 🖥️ abre la interfaz gráfica
 ├── PROCESAR.bat           → ⌨️ procesa desde la terminal (avanzados)
 ├── INSTALAR.bat           → 📦 instala dependencias (solo una vez)
-├── config.txt             → 🔑 clave de API (⚠️ NO compartir)
+├── config.ejemplo.txt     → 📝 plantilla de config.txt
+├── config.txt             → 🔑 clave de API y ruta del Excel (⚠️ NO compartir)
 ├── entrada/               → 📥 aquí van las imágenes nuevas
 ├── procesados/            → ✅ imágenes que salieron OK (se mueven solas)
 ├── revision_manual/       → ⚠️ imágenes que necesitan revisión (se mueven solas)
 └── salida/
-    └── comprobantes.xlsx  → 📊 Excel con todos los datos extraídos
+    └── comprobantes.xlsx  → 📊 Excel con todos los datos extraídos (ruta por defecto)
 ```
 
 ---
@@ -149,7 +174,8 @@ extractor-comprobantes/
 | 🔑 "Falta configurar la clave de API" | Revisar `config.txt` (Paso 4 de la instalación) |
 | 🚫 "La clave no es válida" | La clave está mal copiada o fue revocada. Generar una nueva en [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
 | 🪟 La interfaz no aparece | Buscar la ventana en la barra de tareas de Windows |
-| 📊 El Excel no abre o da error al guardar | Cerrar Excel antes de procesar |
+| 📊 "Cierra el archivo Excel y vuelve a intentar" | Cerrar el Excel y volver a procesar (la imagen sigue en `entrada`) |
+| 📂 "No se pudo crear o acceder a la carpeta del archivo Excel" | Revisar `RUTA_EXCEL` en `config.txt` y que Google Drive esté abierto |
 
 ---
 

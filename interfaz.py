@@ -2,34 +2,40 @@
 """
 Interfaz gráfica del sistema de extracción de comprobantes de pago.
 ==================================================================
-Reutiliza la lógica de procesar_comprobantes.py (Gemini 3.6 Flash,
-validaciones y CSV). Se abre con doble clic en ABRIR.bat.
+Reutiliza la lógica de procesar_comprobantes.py (Gemini Flash, validaciones
+y escritura del archivo Excel .xlsx). La ruta del Excel se toma de la línea
+RUTA_EXCEL de config.txt (puede ser una carpeta de Google Drive).
+
+Construida con customtkinter. Se abre con doble clic en ABRIR.bat
+(Windows) o ABRIR.command (macOS).
 """
 
 import os
 import shutil
+import subprocess
 import sys
 import threading
 import time
-import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox
+
+import customtkinter as ctk
 
 # Lógica compartida con el procesador de consola
 from procesar_comprobantes import (
     ARCHIVO_CONFIG,
-    ARCHIVO_XLSX,
     CARPETA_ENTRADA,
     CARPETA_PROCESADOS,
     CARPETA_REVISION,
     EXTENSIONES,
     MODELO,
     PAUSA_SEGUNDOS,
-    abrir_libro,
-    agregar_fila,
+    ExcelBloqueadoError,
+    agregar_y_guardar,
     cargar_comprobantes_existentes,
     construir_fila,
     crear_carpetas,
     extraer_datos,
+    leer_ruta_excel,
     listar_imagenes,
     mover_imagen,
     preparar_imagen,
@@ -41,34 +47,50 @@ try:
 except ImportError:
     genai = None
 
+try:
+    from PIL import Image, ImageDraw, ImageFont
+except ImportError:
+    Image = None
+
 # ---------------------------------------------------------------------------
-# Colores del tema oscuro
+# Apariencia
 # ---------------------------------------------------------------------------
-COLOR_FONDO = "#1e1e2e"
-COLOR_PANEL = "#27273a"
-COLOR_BORDE = "#3b3b52"
-COLOR_TEXTO = "#e4e4ef"
-COLOR_TEXTO_SUAVE = "#9a9ab0"
-COLOR_ACENTO = "#e53935"
-COLOR_ACENTO_HOVER = "#c62828"
-COLOR_OK = "#4caf50"
-COLOR_REVISAR = "#ffc107"
-COLOR_ERROR = "#ef5350"
-COLOR_LISTA = "#20202f"
-COLOR_SELECCION = "#3d5afe"
+ctk.set_appearance_mode("dark")
+ctk.set_default_color_theme("blue")
 
-FUENTE = ("Segoe UI", 10)
-FUENTE_TITULO = ("Segoe UI", 12, "bold")
-FUENTE_DATO = ("Segoe UI", 11)
-FUENTE_VALOR = ("Segoe UI", 14, "bold")
+COLOR_FONDO = "#0f1117"
+COLOR_PANEL = "#171a23"
+COLOR_TARJETA = "#212532"
+COLOR_TARJETA_HOVER = "#2a2f3e"
+COLOR_BORDE = "#2c3140"
+COLOR_TEXTO = "#f5f6fa"
+COLOR_TEXTO_SUAVE = "#8b90a0"
+COLOR_ACENTO = "#e94560"
+COLOR_ACENTO_HOVER = "#c23650"
+COLOR_DESHABILITADO = "#3a3f4d"
+COLOR_OK = "#22c55e"
+COLOR_REVISAR = "#facc15"
+COLOR_ERROR = "#ef4444"
+COLOR_SELECCION = "#253562"
+COLOR_SELECCION_BORDE = "#3b82f6"
+
+INTERVALO_REFRESCO_MS = 3000   # refresco del estado de la API key y de la lista
+LARGO_MAXIMO_NOMBRE = 46       # caracteres visibles del nombre en la lista
 
 
+# ---------------------------------------------------------------------------
+# Utilidades
+# ---------------------------------------------------------------------------
 def leer_api_key_gui():
     """Lee la API key desde config.txt sin imprimir en consola.
     Devuelve la clave o None si falta o no está configurada."""
     if not ARCHIVO_CONFIG.exists():
         return None
-    for linea in ARCHIVO_CONFIG.read_text(encoding="utf-8-sig").splitlines():
+    try:
+        contenido = ARCHIVO_CONFIG.read_text(encoding="utf-8-sig")
+    except OSError:
+        return None
+    for linea in contenido.splitlines():
         linea = linea.strip()
         if linea.startswith("#") or "=" not in linea:
             continue
@@ -91,206 +113,466 @@ def formatear_moneda(valor):
         return str(valor)
 
 
-class Aplicacion:
-    def __init__(self, root):
-        self.root = root
+def tamano_legible(num_bytes):
+    """Convierte un tamaño en bytes a texto: 850 B, 245 KB, 1,4 MB."""
+    if num_bytes < 1024:
+        return f"{num_bytes} B"
+    if num_bytes < 1024 * 1024:
+        return f"{num_bytes / 1024:.0f} KB"
+    return f"{num_bytes / (1024 * 1024):.1f} MB".replace(".", ",")
+
+
+def acortar(texto, largo=LARGO_MAXIMO_NOMBRE):
+    return texto if len(texto) <= largo else texto[: largo - 1] + "…"
+
+
+def acortar_centro(texto, largo=80):
+    """Acorta un texto largo (p. ej. una ruta) dejando el inicio y el final."""
+    if len(texto) <= largo:
+        return texto
+    mitad = (largo - 1) // 2
+    return texto[:mitad] + "…" + texto[-mitad:]
+
+
+# Fuentes de emoji a color por sistema (ruta, tamaño en que se dibujan)
+FUENTES_EMOJI = [
+    (os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts", "seguiemj.ttf"), 64),
+    ("/System/Library/Fonts/Apple Color Emoji.ttc", 160),
+    ("/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf", 109),
+    ("/usr/share/fonts/noto/NotoColorEmoji.ttf", 109),
+]
+_iconos_emoji = {}
+
+
+def icono_emoji(emoji, lado=18):
+    """Dibuja un emoji a color como CTkImage (Tk los muestra pequeños y sin color).
+    Devuelve None si no hay Pillow o fuente de emoji; entonces se usa texto."""
+    if emoji in _iconos_emoji:
+        return _iconos_emoji[emoji]
+    icono = None
+    if Image is not None:
+        for ruta_fuente, tamano in FUENTES_EMOJI:
+            if not os.path.exists(ruta_fuente):
+                continue
+            try:
+                fuente = ImageFont.truetype(ruta_fuente, tamano)
+                lienzo = Image.new("RGBA", (tamano * 2, tamano * 2), (0, 0, 0, 0))
+                ImageDraw.Draw(lienzo).text((tamano // 2, tamano // 2), emoji,
+                                            font=fuente, embedded_color=True)
+                caja = lienzo.getbbox()
+                if not caja:
+                    continue
+                recorte = lienzo.crop(caja)
+                medida = max(recorte.size)
+                cuadro = Image.new("RGBA", (medida, medida), (0, 0, 0, 0))
+                cuadro.paste(recorte, ((medida - recorte.width) // 2,
+                                       (medida - recorte.height) // 2))
+                cuadro = cuadro.resize((lado * 2, lado * 2), Image.LANCZOS)
+                icono = ctk.CTkImage(light_image=cuadro, dark_image=cuadro,
+                                     size=(lado, lado))
+                break
+            except Exception:
+                continue
+    _iconos_emoji[emoji] = icono
+    return icono
+
+
+def abrir_en_sistema(ruta):
+    """Abre un archivo o carpeta con la aplicación predeterminada del sistema."""
+    if sys.platform.startswith("win"):
+        os.startfile(str(ruta))
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", str(ruta)])
+    else:
+        subprocess.Popen(["xdg-open", str(ruta)])
+
+
+# ---------------------------------------------------------------------------
+# Ventana principal
+# ---------------------------------------------------------------------------
+class Aplicacion(ctk.CTk):
+    CAMPOS = [
+        ("banco_app", "BANCO / APP"),
+        ("numero_comprobante", "COMPROBANTE"),
+        ("numero_cuenta", "CUENTA"),
+        ("nombre_cliente", "NOMBRE"),
+        ("valor_pago", "VALOR"),
+        ("fecha_pago", "FECHA DEL PAGO"),
+    ]
+
+    def __init__(self):
+        super().__init__()
         self.procesando = False
+        self.filas = {}             # nombre de archivo -> widgets de la fila
+        self.seleccionados = set()  # nombres seleccionados en la lista
+        self.resumen = {"total": 0, "ok": 0, "revision": 0, "errores": 0}
 
-        root.title("Sistema de Extracción de Comprobantes — Gemini")
-        root.geometry("980x620")
-        root.minsize(860, 560)
-        root.configure(bg=COLOR_FONDO)
+        self.title("Extractor de Comprobantes")
+        self.geometry("1100x720")
+        self.minsize(1000, 660)
+        self.configure(fg_color=COLOR_FONDO)
 
-        self._configurar_estilos()
-        self._construir_interfaz()
+        self.fuente_titulo = ctk.CTkFont(size=26, weight="bold")
+        self.fuente_seccion = ctk.CTkFont(size=16, weight="bold")
+        self.fuente_normal = ctk.CTkFont(size=13)
+        self.fuente_pequena = ctk.CTkFont(size=11)
+        self.fuente_etiqueta = ctk.CTkFont(size=10, weight="bold")
+        self.fuente_valor = ctk.CTkFont(size=18, weight="bold")
+        self.fuente_boton = ctk.CTkFont(size=13, weight="bold")
+        self.fuente_procesar = ctk.CTkFont(size=18, weight="bold")
+        self.fuente_contador = ctk.CTkFont(size=22, weight="bold")
+
+        self.grid_columnconfigure(0, weight=1, uniform="paneles")
+        self.grid_columnconfigure(1, weight=1, uniform="paneles")
+        self.grid_rowconfigure(1, weight=1)
+
+        self._construir_encabezado()
+        self._construir_panel_izquierdo()
+        self._construir_panel_derecho()
+        self._construir_progreso()
+        self._construir_acciones()
+
         self.refrescar_lista()
-
-    # ------------------------------------------------------------------
-    # Estilos
-    # ------------------------------------------------------------------
-    def _configurar_estilos(self):
-        estilo = ttk.Style(self.root)
-        estilo.theme_use("clam")
-        estilo.configure(
-            "Barra.Horizontal.TProgressbar",
-            troughcolor=COLOR_PANEL,
-            background=COLOR_ACENTO,
-            bordercolor=COLOR_BORDE,
-            lightcolor=COLOR_ACENTO,
-            darkcolor=COLOR_ACENTO,
-        )
+        self.actualizar_estado_api()
+        self._actualizar_ruta_excel()
+        self.after(INTERVALO_REFRESCO_MS, self._refresco_periodico)
 
     # ------------------------------------------------------------------
     # Construcción de la interfaz
     # ------------------------------------------------------------------
-    def _construir_interfaz(self):
-        # Encabezado
-        encabezado = tk.Frame(self.root, bg=COLOR_FONDO)
-        encabezado.pack(fill="x", padx=16, pady=(14, 6))
-        tk.Label(
-            encabezado,
-            text="Sistema de Extracción de Comprobantes",
-            bg=COLOR_FONDO, fg=COLOR_TEXTO, font=("Segoe UI", 16, "bold"),
-        ).pack(side="left")
-        tk.Label(
-            encabezado,
-            text=f"Motor: {MODELO}",
-            bg=COLOR_FONDO, fg=COLOR_TEXTO_SUAVE, font=FUENTE,
-        ).pack(side="right")
+    def _construir_encabezado(self):
+        encabezado = ctk.CTkFrame(self, fg_color="transparent")
+        encabezado.grid(row=0, column=0, columnspan=2, sticky="ew",
+                        padx=24, pady=(18, 10))
+        encabezado.grid_columnconfigure(0, weight=1)
 
-        # Contenedor central con dos paneles
-        centro = tk.Frame(self.root, bg=COLOR_FONDO)
-        centro.pack(fill="both", expand=True, padx=16, pady=6)
-        centro.columnconfigure(0, weight=1, uniform="col")
-        centro.columnconfigure(1, weight=1, uniform="col")
-        centro.rowconfigure(0, weight=1)
-
-        self._construir_panel_izquierdo(centro)
-        self._construir_panel_derecho(centro)
-
-        # Barra de progreso y estado
-        pie = tk.Frame(self.root, bg=COLOR_FONDO)
-        pie.pack(fill="x", padx=16, pady=(6, 4))
-        self.barra = ttk.Progressbar(
-            pie, style="Barra.Horizontal.TProgressbar",
-            orient="horizontal", mode="determinate",
+        ctk.CTkLabel(
+            encabezado, text="Extractor de Comprobantes",
+            font=self.fuente_titulo, text_color=COLOR_TEXTO, anchor="w",
+        ).grid(row=0, column=0, sticky="w")
+        self.etiqueta_subtitulo = ctk.CTkLabel(
+            encabezado, text=f"Modelo: {MODELO}",
+            font=self.fuente_pequena, text_color=COLOR_TEXTO_SUAVE, anchor="w",
         )
-        self.barra.pack(fill="x")
-        self.etiqueta_estado = tk.Label(
-            pie, text="Listo.", bg=COLOR_FONDO, fg=COLOR_TEXTO_SUAVE,
-            font=FUENTE, anchor="w",
+        self.etiqueta_subtitulo.grid(row=1, column=0, sticky="w")
+
+        pastilla = ctk.CTkFrame(encabezado, fg_color=COLOR_PANEL, corner_radius=18,
+                                border_width=1, border_color=COLOR_BORDE)
+        pastilla.grid(row=0, column=1, rowspan=2, sticky="e")
+        self.punto_api = ctk.CTkLabel(pastilla, text="●", font=ctk.CTkFont(size=16),
+                                      text_color=COLOR_TEXTO_SUAVE)
+        self.punto_api.grid(row=0, column=0, padx=(14, 6), pady=6)
+        self.texto_api = ctk.CTkLabel(pastilla, text="Verificando API key...",
+                                      font=self.fuente_boton, text_color=COLOR_TEXTO)
+        self.texto_api.grid(row=0, column=1, padx=(0, 16), pady=6)
+
+    def _boton_secundario(self, padre, emoji, texto, comando, **opciones):
+        icono = icono_emoji(emoji)
+        valores = dict(
+            text=texto, command=comando, font=self.fuente_normal,
+            fg_color=COLOR_TARJETA, hover_color=COLOR_TARJETA_HOVER,
+            text_color=COLOR_TEXTO, corner_radius=10, height=38,
+            border_width=1, border_color=COLOR_BORDE,
         )
-        self.etiqueta_estado.pack(fill="x", pady=(4, 0))
+        if icono is not None:
+            valores.update(image=icono, compound="left")
+        else:
+            valores["text"] = f"{emoji} {texto}"
+        valores.update(opciones)
+        return ctk.CTkButton(padre, **valores)
 
-        # Botonera inferior
-        botonera = tk.Frame(self.root, bg=COLOR_FONDO)
-        botonera.pack(fill="x", padx=16, pady=(4, 14))
+    def _construir_panel_izquierdo(self):
+        panel = ctk.CTkFrame(self, fg_color=COLOR_PANEL, corner_radius=16,
+                             border_width=1, border_color=COLOR_BORDE)
+        panel.grid(row=1, column=0, sticky="nsew", padx=(24, 8), pady=8)
+        panel.grid_columnconfigure(0, weight=1)
+        panel.grid_rowconfigure(1, weight=1)
 
-        self.boton_procesar = tk.Button(
-            botonera, text="PROCESAR", command=self.iniciar_procesamiento,
-            bg=COLOR_ACENTO, fg="white", activebackground=COLOR_ACENTO_HOVER,
-            activeforeground="white", font=("Segoe UI", 14, "bold"),
-            relief="flat", cursor="hand2", padx=40, pady=10, bd=0,
+        cabecera = ctk.CTkFrame(panel, fg_color="transparent")
+        cabecera.grid(row=0, column=0, sticky="ew", padx=16, pady=(14, 8))
+        cabecera.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(cabecera, text="Imágenes pendientes", font=self.fuente_seccion,
+                     text_color=COLOR_TEXTO, anchor="w").grid(row=0, column=0, sticky="w")
+        self.etiqueta_conteo = ctk.CTkLabel(
+            cabecera, text="0", font=self.fuente_boton, text_color=COLOR_TEXTO,
+            fg_color=COLOR_ACENTO, corner_radius=10, width=34, height=24,
         )
-        self.boton_procesar.pack(side="left")
-
-        self.boton_csv = tk.Button(
-            botonera, text="Abrir Excel de resultados", command=self.abrir_csv,
-            bg=COLOR_PANEL, fg=COLOR_TEXTO, activebackground=COLOR_BORDE,
-            activeforeground=COLOR_TEXTO, font=FUENTE,
-            relief="flat", cursor="hand2", padx=18, pady=10, bd=0,
+        self.etiqueta_conteo.grid(row=0, column=1, sticky="e")
+        self.etiqueta_ayuda_lista = ctk.CTkLabel(
+            cabecera, text="Haz clic en las filas para seleccionarlas",
+            font=self.fuente_pequena, text_color=COLOR_TEXTO_SUAVE, anchor="w",
         )
-        self.boton_csv.pack(side="right")
+        self.etiqueta_ayuda_lista.grid(row=1, column=0, columnspan=2, sticky="w")
 
-    def _boton_secundario(self, padre, texto, comando):
-        return tk.Button(
-            padre, text=texto, command=comando,
-            bg=COLOR_PANEL, fg=COLOR_TEXTO, activebackground=COLOR_BORDE,
-            activeforeground=COLOR_TEXTO, font=FUENTE,
-            relief="flat", cursor="hand2", padx=10, pady=6, bd=0,
+        self.lista = ctk.CTkScrollableFrame(
+            panel, fg_color=COLOR_FONDO, corner_radius=12,
+            scrollbar_button_color=COLOR_BORDE,
+            scrollbar_button_hover_color=COLOR_TARJETA_HOVER,
+        )
+        self.lista.grid(row=1, column=0, sticky="nsew", padx=16)
+        self.lista.grid_columnconfigure(0, weight=1)
+
+        self.etiqueta_vacia = ctk.CTkLabel(
+            self.lista,
+            text='No hay imágenes pendientes.\n\nUsa "Agregar imágenes" o guarda\n'
+                 'los comprobantes en la carpeta "entrada".',
+            font=self.fuente_normal, text_color=COLOR_TEXTO_SUAVE, justify="center",
         )
 
-    def _construir_panel_izquierdo(self, padre):
-        panel = tk.Frame(padre, bg=COLOR_PANEL, highlightbackground=COLOR_BORDE,
-                         highlightthickness=1)
-        panel.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+        botones = ctk.CTkFrame(panel, fg_color="transparent")
+        botones.grid(row=2, column=0, sticky="ew", padx=16, pady=14)
+        for columna in range(3):
+            botones.grid_columnconfigure(columna, weight=1, uniform="botones")
+        self._boton_secundario(botones, "➕", "Agregar imágenes", self.agregar_imagenes)\
+            .grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        self._boton_secundario(botones, "📂", "Abrir carpeta", self.abrir_entrada)\
+            .grid(row=0, column=1, sticky="ew", padx=4)
+        self._boton_secundario(botones, "🗑", "Quitar selección", self.quitar_seleccion,
+                               hover_color="#4a2530")\
+            .grid(row=0, column=2, sticky="ew", padx=(4, 0))
 
-        tk.Label(
-            panel, text='Imágenes en "entrada"',
-            bg=COLOR_PANEL, fg=COLOR_TEXTO, font=FUENTE_TITULO, anchor="w",
-        ).pack(fill="x", padx=12, pady=(10, 6))
+    def _construir_panel_derecho(self):
+        panel = ctk.CTkFrame(self, fg_color=COLOR_PANEL, corner_radius=16,
+                             border_width=1, border_color=COLOR_BORDE)
+        panel.grid(row=1, column=1, sticky="nsew", padx=(8, 24), pady=8)
+        panel.grid_columnconfigure(0, weight=1)
 
-        marco_lista = tk.Frame(panel, bg=COLOR_PANEL)
-        marco_lista.pack(fill="both", expand=True, padx=12)
-
-        barra_scroll = tk.Scrollbar(marco_lista)
-        barra_scroll.pack(side="right", fill="y")
-
-        self.lista = tk.Listbox(
-            marco_lista, selectmode="extended",
-            bg=COLOR_LISTA, fg=COLOR_TEXTO, font=FUENTE,
-            selectbackground=COLOR_SELECCION, selectforeground="white",
-            relief="flat", highlightthickness=0, activestyle="none",
-            yscrollcommand=barra_scroll.set,
+        cabecera = ctk.CTkFrame(panel, fg_color="transparent")
+        cabecera.grid(row=0, column=0, sticky="ew", padx=16, pady=(14, 8))
+        cabecera.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(cabecera, text="Último comprobante", font=self.fuente_seccion,
+                     text_color=COLOR_TEXTO, anchor="w").grid(row=0, column=0, sticky="w")
+        self.etiqueta_archivo = ctk.CTkLabel(
+            cabecera, text="Aún no se ha procesado ningún comprobante",
+            font=self.fuente_pequena, text_color=COLOR_TEXTO_SUAVE, anchor="w",
         )
-        self.lista.pack(side="left", fill="both", expand=True)
-        barra_scroll.config(command=self.lista.yview)
-
-        self.etiqueta_conteo = tk.Label(
-            panel, text="", bg=COLOR_PANEL, fg=COLOR_TEXTO_SUAVE,
-            font=FUENTE, anchor="w",
+        self.etiqueta_archivo.grid(row=1, column=0, sticky="w")
+        self.badge_estado = ctk.CTkLabel(
+            cabecera, text="SIN DATOS", font=self.fuente_boton,
+            text_color=COLOR_TEXTO_SUAVE, fg_color=COLOR_TARJETA,
+            corner_radius=14, width=110, height=32,
         )
-        self.etiqueta_conteo.pack(fill="x", padx=12, pady=(4, 0))
+        self.badge_estado.grid(row=0, column=1, rowspan=2, sticky="e")
 
-        botones = tk.Frame(panel, bg=COLOR_PANEL)
-        botones.pack(fill="x", padx=12, pady=10)
-        self._boton_secundario(botones, "Agregar imágenes", self.agregar_imagenes)\
-            .pack(side="left", padx=(0, 6))
-        self._boton_secundario(botones, "Abrir carpeta entrada", self.abrir_entrada)\
-            .pack(side="left", padx=(0, 6))
-        self._boton_secundario(botones, "Quitar selección", self.quitar_seleccion)\
-            .pack(side="left")
-
-    def _construir_panel_derecho(self, padre):
-        panel = tk.Frame(padre, bg=COLOR_PANEL, highlightbackground=COLOR_BORDE,
-                         highlightthickness=1)
-        panel.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
-
-        tk.Label(
-            panel, text="Último comprobante procesado",
-            bg=COLOR_PANEL, fg=COLOR_TEXTO, font=FUENTE_TITULO, anchor="w",
-        ).pack(fill="x", padx=12, pady=(10, 10))
-
-        cuerpo = tk.Frame(panel, bg=COLOR_PANEL)
-        cuerpo.pack(fill="both", expand=True, padx=16)
-        cuerpo.columnconfigure(1, weight=1)
+        tarjetas = ctk.CTkFrame(panel, fg_color="transparent")
+        tarjetas.grid(row=1, column=0, sticky="nsew", padx=10)
+        tarjetas.grid_columnconfigure((0, 1), weight=1, uniform="tarjetas")
 
         self.campos = {}
-        etiquetas = [
-            ("archivo", "Archivo"),
-            ("banco_app", "Banco / App"),
-            ("numero_comprobante", "Comprobante No."),
-            ("numero_cuenta", "Cuenta"),
-            ("nombre_cliente", "Cliente"),
-            ("valor_pago", "Valor"),
-            ("fecha_pago", "Fecha del pago"),
-            ("estado", "Estado"),
-        ]
-        for fila, (clave, texto) in enumerate(etiquetas):
-            tk.Label(
-                cuerpo, text=texto + ":", bg=COLOR_PANEL, fg=COLOR_TEXTO_SUAVE,
-                font=FUENTE_DATO, anchor="e",
-            ).grid(row=fila, column=0, sticky="e", padx=(0, 12), pady=5)
-            fuente = FUENTE_VALOR if clave in ("valor_pago", "estado") else FUENTE_DATO
-            etiqueta = tk.Label(
-                cuerpo, text="—", bg=COLOR_PANEL, fg=COLOR_TEXTO,
-                font=fuente, anchor="w", wraplength=320, justify="left",
-            )
-            etiqueta.grid(row=fila, column=1, sticky="w", pady=5)
-            self.campos[clave] = etiqueta
+        for indice, (clave, titulo) in enumerate(self.CAMPOS):
+            tarjeta = ctk.CTkFrame(tarjetas, fg_color=COLOR_TARJETA, corner_radius=12)
+            tarjeta.grid(row=indice // 2, column=indice % 2, sticky="nsew", padx=6, pady=6)
+            tarjeta.grid_columnconfigure(0, weight=1)
+            ctk.CTkLabel(tarjeta, text=titulo, font=self.fuente_etiqueta,
+                         text_color=COLOR_TEXTO_SUAVE, anchor="w", height=16)\
+                .grid(row=0, column=0, sticky="w", padx=14, pady=(10, 0))
+            valor = ctk.CTkLabel(tarjeta, text="—", font=self.fuente_valor,
+                                 text_color=COLOR_TEXTO, anchor="w", justify="left")
+            valor.grid(row=1, column=0, sticky="w", padx=14, pady=(0, 10))
+            tarjeta.bind("<Configure>",
+                         lambda evento, etiqueta=valor: self._ajustar_ajuste(evento, etiqueta))
+            self.campos[clave] = valor
 
-        self.etiqueta_motivos = tk.Label(
-            panel, text="", bg=COLOR_PANEL, fg=COLOR_REVISAR,
-            font=FUENTE, anchor="w", wraplength=420, justify="left",
+        self.marco_motivos = ctk.CTkFrame(panel, fg_color="#2b2614", corner_radius=12,
+                                          border_width=1, border_color="#5c4f16")
+        self.marco_motivos.grid(row=2, column=0, sticky="ew", padx=16, pady=(6, 14))
+        self.marco_motivos.grid_columnconfigure(0, weight=1)
+        self.etiqueta_motivos = ctk.CTkLabel(
+            self.marco_motivos, text="", font=self.fuente_normal,
+            text_color=COLOR_REVISAR, anchor="w", justify="left",
         )
-        self.etiqueta_motivos.pack(fill="x", padx=16, pady=(0, 12))
+        self.etiqueta_motivos.grid(row=0, column=0, sticky="ew", padx=14, pady=10)
+        self.marco_motivos.bind(
+            "<Configure>",
+            lambda evento: self._ajustar_ajuste(evento, self.etiqueta_motivos))
+        self.marco_motivos.grid_remove()
+
+    def _ajustar_ajuste(self, evento, etiqueta):
+        """Ajusta el wraplength de una etiqueta al ancho de su tarjeta."""
+        escala = ctk.ScalingTracker.get_widget_scaling(self)
+        ancho = max(80, int(evento.width / escala) - 32)
+        etiqueta.configure(wraplength=ancho)
+
+    def _construir_progreso(self):
+        marco = ctk.CTkFrame(self, fg_color="transparent")
+        marco.grid(row=2, column=0, columnspan=2, sticky="ew", padx=24, pady=(8, 0))
+        marco.grid_columnconfigure(0, weight=1)
+
+        self.barra = ctk.CTkProgressBar(marco, height=12, corner_radius=6,
+                                        fg_color=COLOR_TARJETA, progress_color=COLOR_ACENTO)
+        self.barra.grid(row=0, column=0, sticky="ew")
+        self.barra.set(0)
+        self.etiqueta_porcentaje = ctk.CTkLabel(marco, text="0 %", width=56, anchor="e",
+                                                font=self.fuente_boton,
+                                                text_color=COLOR_TEXTO)
+        self.etiqueta_porcentaje.grid(row=0, column=1, padx=(12, 0))
+        self.etiqueta_estado = ctk.CTkLabel(marco, text="Listo.", anchor="w",
+                                            font=self.fuente_normal,
+                                            text_color=COLOR_TEXTO_SUAVE)
+        self.etiqueta_estado.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(2, 0))
+
+    def _construir_acciones(self):
+        marco = ctk.CTkFrame(self, fg_color="transparent")
+        marco.grid(row=3, column=0, columnspan=2, sticky="ew", padx=24, pady=(6, 20))
+        marco.grid_columnconfigure(2, weight=1)
+
+        self.boton_procesar = ctk.CTkButton(
+            marco, text="PROCESAR", command=self.iniciar_procesamiento,
+            font=self.fuente_procesar, width=220, height=58, corner_radius=29,
+            fg_color=COLOR_ACENTO, hover_color=COLOR_ACENTO_HOVER,
+            text_color="white", text_color_disabled="#aeb2bf",
+        )
+        self.boton_procesar.grid(row=0, column=0, sticky="w")
+
+        self._boton_secundario(
+            marco, "📊", "Abrir Excel", self.abrir_excel,
+            width=170, height=58, corner_radius=29, font=self.fuente_boton,
+        ).grid(row=0, column=1, sticky="w", padx=(12, 0))
+
+        resumen = ctk.CTkFrame(marco, fg_color="transparent")
+        resumen.grid(row=0, column=3, sticky="e")
+        self.contadores = {}
+        definicion = [
+            ("total", "Procesados", COLOR_TEXTO),
+            ("ok", "OK", COLOR_OK),
+            ("revision", "Revisión", COLOR_REVISAR),
+            ("errores", "Errores", COLOR_ERROR),
+        ]
+        for columna, (clave, titulo, color) in enumerate(definicion):
+            tarjeta = ctk.CTkFrame(resumen, fg_color=COLOR_PANEL, corner_radius=12,
+                                   border_width=1, border_color=COLOR_BORDE,
+                                   width=100, height=58)
+            tarjeta.grid(row=0, column=columna, padx=(8, 0))
+            tarjeta.grid_propagate(False)
+            tarjeta.grid_columnconfigure(0, weight=1)
+            numero = ctk.CTkLabel(tarjeta, text="0", font=self.fuente_contador,
+                                  text_color=color, height=26)
+            numero.grid(row=0, column=0, pady=(6, 0))
+            ctk.CTkLabel(tarjeta, text=titulo, font=self.fuente_pequena,
+                         text_color=COLOR_TEXTO_SUAVE, height=16)\
+                .grid(row=1, column=0, pady=(0, 6))
+            self.contadores[clave] = numero
+        ctk.CTkLabel(resumen, text="Acumulado de esta sesión", font=self.fuente_pequena,
+                     text_color=COLOR_TEXTO_SUAVE, height=14)\
+            .grid(row=1, column=0, columnspan=4, sticky="e", pady=(4, 0))
 
     # ------------------------------------------------------------------
-    # Acciones del panel izquierdo
+    # Encabezado: estado de la API key y ruta del Excel
+    # ------------------------------------------------------------------
+    def actualizar_estado_api(self):
+        if leer_api_key_gui():
+            self.punto_api.configure(text_color=COLOR_OK)
+            self.texto_api.configure(text="API key configurada")
+        else:
+            self.punto_api.configure(text_color=COLOR_ERROR)
+            self.texto_api.configure(text="Falta API key")
+
+    def _actualizar_ruta_excel(self):
+        try:
+            ruta = leer_ruta_excel()
+            texto = f"Modelo: {MODELO}   ·   Excel: {acortar_centro(str(ruta))}"
+        except OSError:
+            texto = f"Modelo: {MODELO}   ·   Excel: carpeta no disponible (revisa RUTA_EXCEL)"
+        self.etiqueta_subtitulo.configure(text=texto)
+
+    def _refresco_periodico(self):
+        try:
+            self.actualizar_estado_api()
+            if not self.procesando:
+                self.refrescar_lista()
+        finally:
+            self.after(INTERVALO_REFRESCO_MS, self._refresco_periodico)
+
+    # ------------------------------------------------------------------
+    # Lista de imágenes pendientes
     # ------------------------------------------------------------------
     def refrescar_lista(self):
         crear_carpetas()
-        self.lista.delete(0, "end")
         imagenes = listar_imagenes()
-        for imagen in imagenes:
-            self.lista.insert("end", " " + imagen.name)
-        total = len(imagenes)
+        nombres = [imagen.name for imagen in imagenes]
+        presentes = set(nombres)
+
+        # Quitar filas de archivos que ya no están
+        for nombre in list(self.filas):
+            if nombre not in presentes:
+                self.filas.pop(nombre)["marco"].destroy()
+                self.seleccionados.discard(nombre)
+
+        # Crear las nuevas, actualizar tamaños y reordenar
+        for posicion, imagen in enumerate(imagenes):
+            try:
+                tamano = tamano_legible(imagen.stat().st_size)
+            except OSError:
+                tamano = "—"
+            fila = self.filas.get(imagen.name)
+            if fila is None:
+                fila = self._crear_fila(imagen.name, tamano)
+                self.filas[imagen.name] = fila
+            elif fila["tamano"].cget("text") != tamano:
+                fila["tamano"].configure(text=tamano)
+            fila["marco"].grid(row=posicion, column=0, sticky="ew", padx=4, pady=3)
+
+        total = len(nombres)
         if total == 0:
-            self.etiqueta_conteo.config(text="No hay imágenes pendientes.")
-        elif total == 1:
-            self.etiqueta_conteo.config(text="1 imagen pendiente.")
+            self.etiqueta_vacia.grid(row=0, column=0, pady=40)
         else:
-            self.etiqueta_conteo.config(text=f"{total} imágenes pendientes.")
+            self.etiqueta_vacia.grid_remove()
+        self.etiqueta_conteo.configure(text=str(total))
+        self._actualizar_ayuda_lista()
+
+    def _crear_fila(self, nombre, tamano):
+        marco = ctk.CTkFrame(self.lista, fg_color=COLOR_TARJETA, corner_radius=10,
+                             border_width=1, border_color=COLOR_TARJETA, height=40)
+        marco.grid_columnconfigure(1, weight=1)
+        variable = ctk.BooleanVar(value=False)
+        casilla = ctk.CTkCheckBox(
+            marco, text="", variable=variable, width=22,
+            checkbox_width=18, checkbox_height=18, corner_radius=5,
+            border_color=COLOR_TEXTO_SUAVE, fg_color=COLOR_SELECCION_BORDE,
+            command=lambda: self._sincronizar_fila(nombre),
+        )
+        casilla.grid(row=0, column=0, padx=(10, 4), pady=8)
+        etiqueta = ctk.CTkLabel(marco, text=acortar(nombre), font=self.fuente_normal,
+                                text_color=COLOR_TEXTO, anchor="w")
+        etiqueta.grid(row=0, column=1, sticky="ew")
+        etiqueta_tamano = ctk.CTkLabel(marco, text=tamano, font=self.fuente_pequena,
+                                       text_color=COLOR_TEXTO_SUAVE, anchor="e")
+        etiqueta_tamano.grid(row=0, column=2, padx=(8, 12))
+
+        for widget in (marco, etiqueta, etiqueta_tamano):
+            widget.bind("<Button-1>", lambda _evento: self._alternar_fila(nombre))
+            widget.configure(cursor="hand2")
+        return {"marco": marco, "variable": variable, "tamano": etiqueta_tamano}
+
+    def _alternar_fila(self, nombre):
+        fila = self.filas.get(nombre)
+        if fila is None:
+            return
+        fila["variable"].set(not fila["variable"].get())
+        self._sincronizar_fila(nombre)
+
+    def _sincronizar_fila(self, nombre):
+        fila = self.filas.get(nombre)
+        if fila is None:
+            return
+        if fila["variable"].get():
+            self.seleccionados.add(nombre)
+            fila["marco"].configure(fg_color=COLOR_SELECCION,
+                                    border_color=COLOR_SELECCION_BORDE)
+        else:
+            self.seleccionados.discard(nombre)
+            fila["marco"].configure(fg_color=COLOR_TARJETA, border_color=COLOR_TARJETA)
+        self._actualizar_ayuda_lista()
+
+    def _actualizar_ayuda_lista(self):
+        if self.seleccionados:
+            cantidad = len(self.seleccionados)
+            texto = "1 seleccionada" if cantidad == 1 else f"{cantidad} seleccionadas"
+            self.etiqueta_ayuda_lista.configure(text=texto, text_color=COLOR_SELECCION_BORDE)
+        else:
+            self.etiqueta_ayuda_lista.configure(
+                text="Haz clic en las filas para seleccionarlas",
+                text_color=COLOR_TEXTO_SUAVE)
 
     def agregar_imagenes(self):
         rutas = filedialog.askopenfilenames(
@@ -302,6 +584,7 @@ class Aplicacion:
         )
         if not rutas:
             return
+        crear_carpetas()
         copiadas = 0
         for ruta in rutas:
             if os.path.splitext(ruta)[1].lower() not in EXTENSIONES:
@@ -320,17 +603,23 @@ class Aplicacion:
 
     def abrir_entrada(self):
         crear_carpetas()
-        os.startfile(str(CARPETA_ENTRADA))
+        try:
+            abrir_en_sistema(CARPETA_ENTRADA)
+        except OSError as error:
+            messagebox.showerror("Error", f"No se pudo abrir la carpeta:\n{error}")
 
     def quitar_seleccion(self):
-        indices = self.lista.curselection()
-        if not indices:
+        if self.procesando:
+            messagebox.showinfo("Quitar selección",
+                                "Espera a que termine el procesamiento.")
+            return
+        nombres = sorted(self.seleccionados)
+        if not nombres:
             messagebox.showinfo(
                 "Quitar selección",
                 "Primero selecciona en la lista las imágenes que quieres quitar.",
             )
             return
-        nombres = [self.lista.get(i).strip() for i in indices]
         if not messagebox.askyesno(
             "Confirmar",
             f"¿Eliminar {len(nombres)} imagen(es) de la carpeta entrada?\n"
@@ -346,40 +635,69 @@ class Aplicacion:
         self.mostrar_estado(f"Se quitaron {len(nombres)} imágenes.")
 
     # ------------------------------------------------------------------
-    # Panel derecho
+    # Panel derecho y pie
     # ------------------------------------------------------------------
     def mostrar_resultado(self, fila, motivos):
-        self.campos["archivo"].config(text=fila["archivo_origen"] or "—")
-        self.campos["banco_app"].config(text=fila["banco_app"] or "—")
-        self.campos["numero_comprobante"].config(text=fila["numero_comprobante"] or "—")
-        self.campos["numero_cuenta"].config(text=fila["numero_cuenta"] or "—")
-        self.campos["nombre_cliente"].config(text=fila["nombre_cliente"] or "—")
-        self.campos["valor_pago"].config(text=formatear_moneda(fila["valor_pago"]))
-        self.campos["fecha_pago"].config(text=fila["fecha_pago"] or "—")
+        self.etiqueta_archivo.configure(text=f"Archivo: {fila['archivo_origen'] or '—'}")
+        for clave, _titulo in self.CAMPOS:
+            if clave == "valor_pago":
+                texto = formatear_moneda(fila["valor_pago"])
+            else:
+                texto = fila[clave] or "—"
+            self.campos[clave].configure(text=texto)
 
-        estado = fila["estado"]
-        color = COLOR_OK if estado == "OK" else COLOR_REVISAR
-        self.campos["estado"].config(text=estado, fg=color)
-        if motivos:
-            self.etiqueta_motivos.config(text="Motivos: " + "; ".join(motivos))
+        if fila["estado"] == "OK":
+            self.badge_estado.configure(text="✔  OK", fg_color=COLOR_OK,
+                                        text_color="#06240f")
         else:
-            self.etiqueta_motivos.config(text="")
+            self.badge_estado.configure(text="⚠  REVISAR", fg_color=COLOR_REVISAR,
+                                        text_color="#2b2200")
+
+        if motivos:
+            self.etiqueta_motivos.configure(
+                text="Motivos:\n" + "\n".join(f"•  {motivo}" for motivo in motivos))
+            self.marco_motivos.grid()
+        else:
+            self.etiqueta_motivos.configure(text="")
+            self.marco_motivos.grid_remove()
+
+    def mostrar_estado(self, texto, color=COLOR_TEXTO_SUAVE):
+        self.etiqueta_estado.configure(text=texto, text_color=color)
+
+    def actualizar_progreso(self, hechos, total):
+        fraccion = hechos / total if total else 0
+        self.barra.set(fraccion)
+        self.etiqueta_porcentaje.configure(text=f"{round(fraccion * 100)} %")
+
+    def sumar_resumen(self, clave):
+        self.resumen[clave] += 1
+        self.resumen["total"] += 1
+        for nombre, etiqueta in self.contadores.items():
+            etiqueta.configure(text=str(self.resumen[nombre]))
+
+    def _poner_boton_procesando(self, activo):
+        if activo:
+            self.boton_procesar.configure(state="disabled", text="Procesando...",
+                                          fg_color=COLOR_DESHABILITADO)
+        else:
+            self.boton_procesar.configure(state="normal", text="PROCESAR",
+                                          fg_color=COLOR_ACENTO)
 
     # ------------------------------------------------------------------
     # Procesamiento
     # ------------------------------------------------------------------
-    def mostrar_estado(self, texto, color=COLOR_TEXTO_SUAVE):
-        self.etiqueta_estado.config(text=texto, fg=color)
-
     def iniciar_procesamiento(self):
         if self.procesando:
             return
+
+        self.actualizar_estado_api()
 
         if genai is None:
             messagebox.showerror(
                 "Faltan dependencias",
                 "No está instalada la librería de Google Gemini.\n"
-                "Solución: haz doble clic en INSTALAR.bat y espera a que termine.",
+                "Solución: haz doble clic en INSTALAR.bat (o INSTALAR.command en Mac) "
+                "y espera a que termine.",
             )
             return
 
@@ -407,8 +725,9 @@ class Aplicacion:
             return
 
         self.procesando = True
-        self.boton_procesar.config(state="disabled", text="PROCESANDO...")
-        self.barra.config(maximum=len(imagenes), value=0)
+        self._poner_boton_procesando(True)
+        self.actualizar_progreso(0, len(imagenes))
+        self.mostrar_estado(f"Preparando {len(imagenes)} imágenes...")
         hilo = threading.Thread(
             target=self._procesar_en_hilo, args=(clave, imagenes), daemon=True,
         )
@@ -416,17 +735,19 @@ class Aplicacion:
 
     def _procesar_en_hilo(self, clave, imagenes):
         """Se ejecuta en un hilo aparte. Toda actualización de la interfaz
-        se envía al hilo principal con root.after."""
+        se envía al hilo principal con self.after."""
         total = len(imagenes)
         total_ok = total_revisar = total_error = 0
+        ruta = None
+        aviso = None  # (título, mensaje) de un error que detuvo el proceso
 
         def en_ui(funcion, *args):
-            self.root.after(0, funcion, *args)
+            self.after(0, funcion, *args)
 
         try:
-            comprobantes_existentes = cargar_comprobantes_existentes()
+            ruta = leer_ruta_excel()
+            comprobantes_existentes = cargar_comprobantes_existentes(ruta)
             cliente = genai.Client(api_key=clave)
-            libro, hoja = abrir_libro()
 
             for indice, archivo in enumerate(imagenes, start=1):
                 en_ui(self.mostrar_estado,
@@ -436,87 +757,133 @@ class Aplicacion:
                     datos = extraer_datos(cliente, imagen_bytes)
                     estado, motivos = validar(datos, comprobantes_existentes)
                     fila = construir_fila(archivo, datos, estado)
-                    agregar_fila(hoja, fila)
-                    libro.save(ARCHIVO_XLSX)
+
+                    # Primero se guarda en Excel; si falla, la imagen queda en entrada
+                    agregar_y_guardar(fila, ruta)
 
                     if fila["numero_comprobante"]:
                         comprobantes_existentes.add(fila["numero_comprobante"])
 
                     if estado == "OK":
                         total_ok += 1
-                        mover_imagen(archivo, CARPETA_PROCESADOS)
+                        destino, clave_resumen = CARPETA_PROCESADOS, "ok"
                     else:
                         total_revisar += 1
-                        mover_imagen(archivo, CARPETA_REVISION)
+                        destino, clave_resumen = CARPETA_REVISION, "revision"
 
                     en_ui(self.mostrar_resultado, fila, motivos)
+                    en_ui(self.sumar_resumen, clave_resumen)
+
+                    try:
+                        mover_imagen(archivo, destino)
+                    except OSError as error:
+                        en_ui(self.mostrar_estado,
+                              f"{archivo.name} se guardó en el Excel, pero no se pudo "
+                              f"mover la imagen: {error}", COLOR_REVISAR)
+
+                except ExcelBloqueadoError as error:
+                    aviso = self._aviso_excel_bloqueado(error, ruta)
+                    break
 
                 except Exception as error:
                     error_str = str(error).lower()
-                    if ("api key" in error_str or "authenticate" in error_str
+                    # Un PermissionError del sistema (OSError) no es un problema de API key
+                    if not isinstance(error, OSError) and (
+                            "api key" in error_str or "authenticate" in error_str
                             or "permission" in error_str):
-                        en_ui(self._error_api_key)
+                        aviso = (
+                            "Clave de API no válida",
+                            "Gemini rechazó la clave de API. Revisa config.txt.\n\n"
+                            "La clave se obtiene gratis en "
+                            "https://aistudio.google.com/apikey",
+                        )
                         break
                     total_error += 1
+                    en_ui(self.sumar_resumen, "errores")
                     en_ui(self.mostrar_estado,
                           f"Error con {archivo.name}: {error}", COLOR_ERROR)
 
-                en_ui(self.barra.config, {"value": indice})
+                en_ui(self.actualizar_progreso, indice, total)
                 en_ui(self.refrescar_lista)
 
                 # Pausa para respetar el límite de solicitudes por minuto
                 if indice < total:
                     time.sleep(PAUSA_SEGUNDOS)
 
+        except ExcelBloqueadoError as error:
+            aviso = self._aviso_excel_bloqueado(error, ruta)
+        except OSError as error:
+            aviso = (
+                "No se puede acceder al Excel",
+                "No se pudo acceder a la carpeta del archivo Excel.\n"
+                "Revisa la línea RUTA_EXCEL de config.txt y que la unidad "
+                "(por ejemplo Google Drive) esté disponible.\n\n"
+                f"Detalle: {error}",
+            )
         except Exception as error:
-            en_ui(self.mostrar_estado, f"Error inesperado: {error}", COLOR_ERROR)
+            aviso = ("Error inesperado", f"Ocurrió un error inesperado:\n{error}")
 
-        en_ui(self._terminar, total_ok, total_revisar, total_error)
+        en_ui(self._terminar, total_ok, total_revisar, total_error, ruta, aviso)
 
-    def _error_api_key(self):
-        messagebox.showerror(
-            "Clave de API no válida",
-            "Gemini rechazó la clave de API. Revisa config.txt.\n\n"
-            "La clave se obtiene gratis en https://aistudio.google.com/apikey",
-        )
+    @staticmethod
+    def _aviso_excel_bloqueado(error, ruta):
+        ruta_excel = getattr(error, "ruta", None) or ruta
+        mensaje = "Cierra el archivo Excel y vuelve a intentar"
+        if ruta_excel:
+            mensaje += f"\n\nArchivo: {ruta_excel}"
+        return ("Excel abierto", mensaje)
 
-    def _terminar(self, total_ok, total_revisar, total_error):
+    def _terminar(self, total_ok, total_revisar, total_error, ruta, aviso=None):
         self.procesando = False
-        self.boton_procesar.config(state="normal", text="PROCESAR")
+        self._poner_boton_procesando(False)
         self.refrescar_lista()
-        resumen = (f"Terminado. OK: {total_ok}  |  Para revisar: {total_revisar}"
-                   f"  |  Con error: {total_error}")
-        self.mostrar_estado(resumen, COLOR_TEXTO)
+        self.actualizar_estado_api()
+
+        resumen = (f"OK: {total_ok}   |   Para revisar: {total_revisar}"
+                   f"   |   Con error: {total_error}")
+        if aviso:
+            titulo, mensaje = aviso
+            self.mostrar_estado(f"Detenido: {titulo}.   {resumen}", COLOR_ERROR)
+            messagebox.showerror(titulo, mensaje)
+            return
+
+        self.mostrar_estado(f"Terminado.   {resumen}", COLOR_TEXTO)
+        destino = f"Los resultados están en:\n{ruta}" if ruta else ""
         messagebox.showinfo(
             "Proceso terminado",
             f"Procesados correctamente (OK): {total_ok}\n"
             f"Para revisión manual: {total_revisar}\n"
             f"Con error (quedan en entrada): {total_error}\n\n"
-            "Los resultados están en salida\\comprobantes.xlsx",
+            f"{destino}",
         )
 
     # ------------------------------------------------------------------
     # Excel de resultados
     # ------------------------------------------------------------------
-    def abrir_csv(self):
-        if not ARCHIVO_XLSX.exists():
+    def abrir_excel(self):
+        try:
+            ruta = leer_ruta_excel()
+        except OSError as error:
+            messagebox.showerror("No se puede acceder al Excel", str(error))
+            return
+        if not ruta.exists():
             messagebox.showinfo(
                 "Sin resultados",
                 "Todavía no existe el archivo de resultados.\n"
-                "Procesa al menos un comprobante primero.",
+                "Procesa al menos un comprobante primero.\n\n"
+                f"Ruta configurada: {ruta}",
             )
             return
         try:
-            os.startfile(str(ARCHIVO_XLSX))
+            abrir_en_sistema(ruta)
         except OSError as error:
             messagebox.showerror("Error", f"No se pudo abrir el Excel:\n{error}")
 
 
 def main():
     crear_carpetas()
-    root = tk.Tk()
-    Aplicacion(root)
-    root.mainloop()
+    app = Aplicacion()
+    app.mainloop()
 
 
 if __name__ == "__main__":

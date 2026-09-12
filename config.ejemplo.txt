@@ -1,0 +1,5 @@
+# Clave de API de Google Gemini (gratis en https://aistudio.google.com/apikey)
+API_KEY=PEGA_AQUI_TU_CLAVE
+
+# Cambia esta ruta para guardar el Excel en Google Drive. Ejemplo: C:\Users\TuUsuario\Google Drive\Mi unidad\Comprobantes\comprobantes.xlsx
+RUTA_EXCEL=salida/comprobantes.xlsx

@@ -4,13 +4,19 @@ Sistema de extracción de comprobantes de pago con IA — versión 1
 =================================================================
 Usa Google Gemini Flash (API gratuita, sin tarjeta de crédito).
 Flujo: lee imágenes de "entrada", envía cada una a Gemini, extrae los datos
-en JSON, valida, escribe en salida/comprobantes.xlsx y mueve la imagen.
+en JSON, valida, agrega la fila al archivo Excel y mueve la imagen.
+
+El archivo Excel se guarda en la ruta indicada por la linea RUTA_EXCEL de
+config.txt (por defecto salida/comprobantes.xlsx). Puede apuntar a una carpeta
+de Google Drive compartida entre varios PCs: el libro se reabre en cada fila y
+siempre se agrega al final (nunca se sobreescribe).
 
 Uso normal: doble clic en PROCESAR.bat
 """
 
 import io
 import json
+import os
 import re
 import shutil
 import sys
@@ -56,8 +62,10 @@ CARPETA_ENTRADA = BASE / "entrada"
 CARPETA_PROCESADOS = BASE / "procesados"
 CARPETA_REVISION = BASE / "revision_manual"
 CARPETA_SALIDA = BASE / "salida"
-ARCHIVO_XLSX = CARPETA_SALIDA / "comprobantes.xlsx"
 ARCHIVO_CONFIG = BASE / "config.txt"
+
+# Ruta del Excel si config.txt no define RUTA_EXCEL (relativa a BASE)
+RUTA_EXCEL_POR_DEFECTO = "salida/comprobantes.xlsx"
 
 # Modelo de Gemini Flash (gratuito, 1500 solicitudes/día, 15/minuto)
 MODELO = "gemini-3.6-flash"
@@ -107,8 +115,61 @@ Reglas estrictas:
 
 
 # ---------------------------------------------------------------------------
+# Errores
+# ---------------------------------------------------------------------------
+class ExcelBloqueadoError(Exception):
+    """El archivo Excel está abierto en otro programa (PermissionError)."""
+
+    MENSAJE = "Cierra el archivo Excel y vuelve a intentar"
+
+    def __init__(self, ruta=None):
+        self.ruta = Path(ruta) if ruta is not None else None
+        super().__init__(self.MENSAJE)
+
+    def __str__(self):
+        return self.MENSAJE
+
+
+# ---------------------------------------------------------------------------
 # Funciones auxiliares
 # ---------------------------------------------------------------------------
+def leer_ruta_excel():
+    """Devuelve la ruta (Path) del Excel según la línea RUTA_EXCEL= de config.txt.
+
+    Se lee en cada llamada, así los cambios en config.txt aplican sin reiniciar.
+    Si no hay config.txt, falta la línea o está vacía, usa RUTA_EXCEL_POR_DEFECTO.
+    Las rutas relativas se resuelven respecto a la carpeta del programa.
+    Crea las carpetas padre; si no se puede, lanza OSError con un mensaje claro.
+    """
+    valor = ""
+    if ARCHIVO_CONFIG.exists():
+        for linea in ARCHIVO_CONFIG.read_text(encoding="utf-8-sig").splitlines():
+            linea = linea.strip()
+            if linea.startswith("#") or "=" not in linea:
+                continue
+            clave, contenido = linea.split("=", 1)
+            if clave.strip() == "RUTA_EXCEL":
+                valor = contenido.strip().strip('"').strip("'").strip()
+                break
+    if not valor:
+        valor = RUTA_EXCEL_POR_DEFECTO
+
+    ruta = Path(os.path.expandvars(os.path.expanduser(valor)))
+    if not ruta.is_absolute():
+        ruta = BASE / ruta
+
+    try:
+        ruta.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        raise OSError(
+            f"No se pudo crear o acceder a la carpeta del archivo Excel: {ruta.parent}\n"
+            f"Ruta configurada (RUTA_EXCEL en config.txt): {ruta}\n"
+            "Verifica que la ruta sea correcta y que la unidad (por ejemplo "
+            f"Google Drive) este disponible. Detalle: {error}"
+        ) from error
+    return ruta
+
+
 def leer_api_key():
     """Lee la clave de API desde config.txt."""
     if not ARCHIVO_CONFIG.exists():
@@ -145,19 +206,25 @@ def listar_imagenes():
     )
 
 
-def cargar_comprobantes_existentes():
+def cargar_comprobantes_existentes(ruta=None):
     """Lee el Excel existente y devuelve el conjunto de comprobantes ya registrados."""
+    ruta = leer_ruta_excel() if ruta is None else Path(ruta)
     existentes = set()
-    if ARCHIVO_XLSX.exists():
-        libro = load_workbook(ARCHIVO_XLSX, read_only=True)
-        hoja = libro.active
-        indice = COLUMNAS.index("numero_comprobante")
-        for fila in hoja.iter_rows(min_row=2, values_only=True):
-            if fila and len(fila) > indice and fila[indice] is not None:
-                numero = str(fila[indice]).strip()
-                if numero:
-                    existentes.add(numero)
-        libro.close()
+    try:
+        if ruta.exists():
+            libro = load_workbook(ruta, read_only=True)
+            try:
+                hoja = libro.active
+                indice = COLUMNAS.index("numero_comprobante")
+                for fila in hoja.iter_rows(min_row=2, values_only=True):
+                    if fila and len(fila) > indice and fila[indice] is not None:
+                        numero = str(fila[indice]).strip()
+                        if numero:
+                            existentes.add(numero)
+            finally:
+                libro.close()
+    except PermissionError as error:
+        raise ExcelBloqueadoError(ruta) from error
     return existentes
 
 
@@ -180,10 +247,11 @@ def _ajustar_anchos(hoja, valores):
             hoja.column_dimensions[letra].width = ancho
 
 
-def abrir_libro():
-    """Abre salida/comprobantes.xlsx, o lo crea con los encabezados formateados."""
-    if ARCHIVO_XLSX.exists():
-        libro = load_workbook(ARCHIVO_XLSX)
+def abrir_libro(ruta=None):
+    """Abre el Excel configurado, o crea un libro nuevo con los encabezados formateados."""
+    ruta = leer_ruta_excel() if ruta is None else Path(ruta)
+    if ruta.exists():
+        libro = load_workbook(ruta)
         return libro, libro.active
     libro = Workbook()
     hoja = libro.active
@@ -212,6 +280,28 @@ def agregar_fila(hoja, fila):
         celda_estado.fill = RELLENO_REVISAR
 
     _ajustar_anchos(hoja, valores)
+
+
+def agregar_y_guardar(fila, ruta=None):
+    """Agrega la fila (dict) al final del Excel y lo guarda.
+
+    Reabre el archivo en cada llamada para no perder filas que otro PC haya
+    agregado entre medio (p. ej. en una carpeta compartida de Google Drive).
+    Si el archivo no existe, lo crea con encabezados. Nunca sobreescribe un
+    archivo existente con un libro nuevo. PermissionError -> ExcelBloqueadoError.
+    """
+    ruta = leer_ruta_excel() if ruta is None else Path(ruta)
+    try:
+        if not ruta.exists():
+            ruta.parent.mkdir(parents=True, exist_ok=True)
+        libro, hoja = abrir_libro(ruta)
+        try:
+            agregar_fila(hoja, fila)
+            libro.save(ruta)
+        finally:
+            libro.close()
+    except PermissionError as error:
+        raise ExcelBloqueadoError(ruta) from error
 
 
 def preparar_imagen(ruta):
@@ -364,6 +454,14 @@ def main():
 
     crear_carpetas()
 
+    try:
+        ruta_excel = leer_ruta_excel()
+    except OSError as error:
+        print(f"ERROR: {error}")
+        input("\nPresiona ENTER para cerrar...")
+        return
+    print(f"El Excel se guardara en: {ruta_excel}\n")
+
     clave = leer_api_key()
     if not clave:
         input("\nPresiona ENTER para cerrar...")
@@ -384,11 +482,16 @@ def main():
         print("ADVERTENCIA: Gemini gratis permite hasta 1,500 solicitudes por dia.")
         print(f"Tienes {total} imagenes. Se procesaran las primeras 1,500 hoy.\n")
 
-    comprobantes_existentes = cargar_comprobantes_existentes()
+    try:
+        comprobantes_existentes = cargar_comprobantes_existentes(ruta_excel)
+    except ExcelBloqueadoError as error:
+        print(f"ERROR: {error}")
+        print(f"Archivo: {error.ruta}")
+        input("\nPresiona ENTER para cerrar...")
+        return
     cliente = genai.Client(api_key=clave)
 
     total_ok = total_revisar = total_error = 0
-    libro, hoja = abrir_libro()
 
     for indice, archivo in enumerate(imagenes, start=1):
         if indice > 1500:
@@ -401,8 +504,8 @@ def main():
             datos = extraer_datos(cliente, imagen_bytes)
             estado, motivos = validar(datos, comprobantes_existentes)
             fila = construir_fila(archivo, datos, estado)
-            agregar_fila(hoja, fila)
-            libro.save(ARCHIVO_XLSX)
+            # Se guarda antes de mover la imagen: si falla, la imagen sigue en "entrada"
+            agregar_y_guardar(fila, ruta_excel)
 
             if fila["numero_comprobante"]:
                 comprobantes_existentes.add(fila["numero_comprobante"])
@@ -420,6 +523,15 @@ def main():
             if indice < total:
                 time.sleep(PAUSA_SEGUNDOS)
 
+        except ExcelBloqueadoError as error:
+            # Debe ir antes del except generico: un PermissionError contiene
+            # "permission" y se confundiria con una clave de API invalida.
+            total_error += 1
+            print("[ERROR]")
+            print(f"\n{error}")
+            print(f"Archivo: {error.ruta}")
+            print("La imagen se queda en 'entrada'. Se detiene el procesamiento.")
+            break
         except Exception as error:
             error_str = str(error).lower()
             if "api key" in error_str or "authenticate" in error_str or "permission" in error_str:
@@ -437,8 +549,7 @@ def main():
                     datos = extraer_datos(cliente, imagen_bytes)
                     estado, motivos = validar(datos, comprobantes_existentes)
                     fila = construir_fila(archivo, datos, estado)
-                    agregar_fila(hoja, fila)
-                    libro.save(ARCHIVO_XLSX)
+                    agregar_y_guardar(fila, ruta_excel)
                     if fila["numero_comprobante"]:
                         comprobantes_existentes.add(fila["numero_comprobante"])
                     if estado == "OK":
@@ -449,6 +560,12 @@ def main():
                         total_revisar += 1
                         mover_imagen(archivo, CARPETA_REVISION)
                         print(f"   Reintento {archivo.name} ... [REVISAR]")
+                except ExcelBloqueadoError as error_excel:
+                    total_error += 1
+                    print(f"\n{error_excel}")
+                    print(f"Archivo: {error_excel.ruta}")
+                    print("La imagen se queda en 'entrada'. Se detiene el procesamiento.")
+                    break
                 except Exception:
                     total_error += 1
                     print(f"   Reintento fallido. La imagen queda en 'entrada'.")
@@ -464,7 +581,7 @@ def main():
     print(f"  Para revision manual:          {total_revisar}")
     print(f"  Con error (quedan en entrada): {total_error}")
     print()
-    print(f"Resultados guardados en: salida\\comprobantes.xlsx (abrelo con Excel)")
+    print(f"Resultados guardados en: {ruta_excel} (abrelo con Excel)")
     if total_revisar:
         print('Las imagenes dudosas estan en la carpeta "revision_manual".')
     input("\nPresiona ENTER para cerrar...")
