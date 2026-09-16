@@ -7,3 +7,11 @@ revision_manual/
 salida/
 test.py
 .env
+
+# Empaquetado (PyInstaller)
+dist/
+build/
+*.spec
+*.ico
+Extractor Comprobantes/
+errores.log

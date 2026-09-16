@@ -57,7 +57,12 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Configuración general
 # ---------------------------------------------------------------------------
-BASE = Path(__file__).resolve().parent
+# Carpeta del programa. Si está empaquetado con PyInstaller (--onefile) es la
+# carpeta del ejecutable; si no, la carpeta de este archivo .py.
+if getattr(sys, "frozen", False):
+    BASE = Path(sys.executable).resolve().parent
+else:
+    BASE = Path(__file__).resolve().parent
 CARPETA_ENTRADA = BASE / "entrada"
 CARPETA_PROCESADOS = BASE / "procesados"
 CARPETA_REVISION = BASE / "revision_manual"
