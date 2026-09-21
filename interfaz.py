@@ -153,6 +153,7 @@ try:
         extraer_datos,
         leer_ruta_excel,
         listar_imagenes,
+        mapear_columnas,
         mover_imagen,
         preparar_imagen,
         validar,
@@ -539,19 +540,17 @@ def leer_historial_excel(ruta, limite=LIMITE_HISTORIAL):
         hoja = libro.active
         iterador = hoja.iter_rows(values_only=True)
         encabezados = next(iterador, None) or ()
-        # Posición de cada columna según el encabezado (o el orden por defecto)
-        indices = {}
-        for columna in COLUMNAS:
-            if columna in encabezados:
-                indices[columna] = encabezados.index(columna)
-            else:
-                indices[columna] = COLUMNAS.index(columna)
+        # Posición de cada columna según el encabezado (acepta los nombres
+        # viejos, p. ej. numero_cuenta). Las que el Excel no tenga quedan vacías.
+        indices = mapear_columnas(encabezados)
         for posicion, fila in enumerate(iterador):
             if not fila or all(valor is None for valor in fila):
                 continue
             registro = {}
-            for columna, indice in indices.items():
-                registro[columna] = fila[indice] if indice < len(fila) else None
+            for columna in COLUMNAS:
+                indice = indices.get(columna)
+                registro[columna] = (fila[indice] if indice is not None
+                                     and indice < len(fila) else None)
             registros.append((posicion, registro))
     finally:
         libro.close()
@@ -1118,7 +1117,8 @@ class Aplicacion(ctk.CTk):
     CAMPOS = [
         ("banco_app", "BANCO / APP"),
         ("numero_comprobante", "COMPROBANTE"),
-        ("numero_cuenta", "CUENTA"),
+        ("numero_cuenta_o_llave", "CUENTA / LLAVE"),
+        ("tipo_cuenta_o_llave", "TIPO CUENTA / LLAVE"),
         ("nombre_cliente", "NOMBRE"),
         ("valor_pago", "VALOR"),
         ("fecha_pago", "FECHA DEL PAGO"),
@@ -1152,7 +1152,7 @@ class Aplicacion(ctk.CTk):
         self.marco_bienvenida = None
 
         self.title("Extractor de Comprobantes")
-        self.geometry("1160x820")
+        self.geometry("1160x860")
         self.minsize(1040, 720)
         self.configure(fg_color=COLOR_FONDO)
 
@@ -1338,14 +1338,19 @@ class Aplicacion(ctk.CTk):
         self.campos = {}
         for indice, (clave, titulo) in enumerate(self.CAMPOS):
             tarjeta = ctk.CTkFrame(tarjetas, fg_color=COLOR_TARJETA, corner_radius=12)
-            tarjeta.grid(row=indice // 2, column=indice % 2, sticky="nsew", padx=6, pady=6)
+            # Si la cantidad de campos es impar, la última tarjeta ocupa toda la fila.
+            # Los márgenes van ajustados: son 4 filas de tarjetas y el historial
+            # de abajo necesita su espacio.
+            ancho = 2 if indice == len(self.CAMPOS) - 1 and indice % 2 == 0 else 1
+            tarjeta.grid(row=indice // 2, column=indice % 2, columnspan=ancho,
+                         sticky="nsew", padx=6, pady=4)
             tarjeta.grid_columnconfigure(0, weight=1)
             ctk.CTkLabel(tarjeta, text=titulo, font=self.fuente_etiqueta,
                          text_color=COLOR_TEXTO_SUAVE, anchor="w", height=16)\
-                .grid(row=0, column=0, sticky="w", padx=14, pady=(10, 0))
+                .grid(row=0, column=0, sticky="w", padx=14, pady=(7, 0))
             valor = ctk.CTkLabel(tarjeta, text="—", font=self.fuente_valor,
                                  text_color=COLOR_TEXTO, anchor="w", justify="left")
-            valor.grid(row=1, column=0, sticky="w", padx=14, pady=(0, 10))
+            valor.grid(row=1, column=0, sticky="w", padx=14, pady=(0, 6))
             tarjeta.bind("<Configure>",
                          lambda evento, etiqueta=valor: self._ajustar_ajuste(evento, etiqueta))
             self.campos[clave] = valor

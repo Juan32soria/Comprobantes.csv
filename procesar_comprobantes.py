@@ -47,7 +47,7 @@ except ImportError:
 try:
     from openpyxl import Workbook, load_workbook
     from openpyxl.styles import Font, PatternFill
-    from openpyxl.utils import get_column_letter
+    from openpyxl.utils import column_index_from_string, get_column_letter
 except ImportError:
     print("ERROR: Faltan las dependencias del sistema (openpyxl).")
     print("Solucion: abre una terminal y ejecuta: pip install openpyxl")
@@ -86,37 +86,85 @@ COLUMNAS = [
     "archivo_origen",
     "banco_app",
     "numero_comprobante",
-    "numero_cuenta",
+    "numero_cuenta_o_llave",
+    "tipo_cuenta_o_llave",
     "nombre_cliente",
     "valor_pago",
     "fecha_pago",
     "estado",
 ]
 
-PROMPT = """Analiza esta imagen de un comprobante de pago colombiano (Nequi, Bancolombia o Daviplata).
+# Nombres de columna de versiones anteriores -> nombre actual. Sirve para leer
+# y migrar los Excel creados antes de Bre-B / llaves.
+COLUMNAS_VIEJAS = {"numero_cuenta": "numero_cuenta_o_llave"}
 
-Extrae los datos y responde ÚNICAMENTE con un objeto JSON válido, sin texto adicional y sin marcas de código:
+PROMPT = """Analiza esta imagen de un comprobante de pago o transferencia colombiano.
+
+CONTEXTO IMPORTANTE: Este comprobante es un pago que alguien le hizo a nuestro negocio. Necesitamos los datos de QUIEN ENVIÓ el dinero (el remitente/origen), NO de quien lo recibe (el destino somos nosotros).
+
+Extrae los datos y responde ÚNICAMENTE con un objeto JSON válido:
 
 {
-  "banco_app": "Nequi" | "Bancolombia" | "Daviplata" | "Otro",
-  "numero_comprobante": "solo dígitos, o null",
-  "numero_cuenta": "dígitos; si está parcialmente oculto transcribe lo visible; o null",
-  "nombre_cliente": "nombre tal como aparece, o null",
-  "valor_pago": entero en pesos, o null,
+  "banco_app": "string - la app o plataforma desde donde se hizo el pago",
+  "numero_comprobante": "string alfanumérico tal como aparece, o null",
+  "numero_cuenta_o_llave": "string - cuenta, celular o llave del REMITENTE tal como aparece, o null",
+  "tipo_cuenta_o_llave": "string - 'Cuenta de Ahorros' | 'Cuenta Corriente' | 'Celular' | 'Llave alias' | 'Llave documento' | 'Llave correo' | 'Deposito' | 'Otro' | null",
+  "nombre_cliente": "string - nombre del REMITENTE (quien envía el dinero), o null",
+  "valor_pago": entero en pesos sin decimales, o null,
   "fecha_pago": "AAAA-MM-DD, o null"
 }
 
-Guía por aplicación:
-- Nequi: el número de comprobante aparece como "Referencia". La cuenta suele ser un número de celular de 10 dígitos que inicia en 3.
-- Bancolombia: el número de comprobante aparece como "Comprobante No." o "Número de aprobación".
-- Daviplata: el número de comprobante aparece como "No. de aprobación". La cuenta suele ser un celular de 10 dígitos.
+GUÍA POR APLICACIÓN:
 
-Reglas estrictas:
-1. NUNCA inventes ni completes datos. Si un dato no es legible o no aparece en la imagen, usa null.
-2. numero_comprobante y numero_cuenta: solo dígitos, sin espacios, puntos ni guiones. Si la cuenta aparece parcialmente oculta (por ejemplo ***1234), transcribe exactamente lo visible incluyendo los asteriscos.
-3. nombre_cliente: transcribe el nombre de la persona exactamente como aparece, incluso si está parcialmente oculto (por ejemplo "MARIA C***"). No lo completes ni lo adivines.
-4. valor_pago: número entero en pesos colombianos, sin puntos, comas ni símbolo $. Ejemplo: 150000.
-5. fecha_pago: la fecha de la transacción en formato AAAA-MM-DD. Si el año no es visible, usa null."""
+Bancolombia (transferencia tradicional):
+- Comprobante: "Comprobante No." (solo dígitos, ej: 0000032700)
+- REMITENTE: está en "Producto origen" — el nombre y la cuenta del que envía
+- DESTINO (ignorar para nombre_cliente): está en "Producto destino"
+- Si solo se ve el destino y no el origen, el nombre_cliente es null
+
+Nequi:
+- Comprobante: "Referencia" (alfanumérico, ej: M12170909)
+- banco_app: "Nequi"
+- Si aparece "Llave" con @ es una llave alias de Bre-B (ej: @Pzt579)
+- El celular del remitente aparece en "¿Desde dónde se hizo el envío?"
+- El nombre suele estar parcialmente oculto con asteriscos
+
+Bre-B (Bancolombia u otra entidad):
+- Comprobante: "Comprobante No." (alfanumérico, ej: TR2AgRVd5REC)
+- banco_app: "Bre-B" seguido de la entidad si se identifica
+- La cuenta origen puede aparecer parcialmente oculta (ej: *6318)
+- Los nombres suelen estar ocultos con asteriscos (ej: Jua*** Jos***)
+
+Bold / Bold CF:
+- Comprobante: "ID de transacción" (alfanumérico, ej: QUO102IFI4)
+- banco_app: "Bold"
+- REMITENTE: está en "Origen" — nombre (Dueño) y cuenta (Número de cuenta)
+- DESTINO (ignorar): está en "Destino"
+
+Daviplata:
+- Comprobante: "No. de aprobación" (dígitos)
+- banco_app: "Daviplata"
+- La cuenta suele ser un celular de 10 dígitos
+
+PSE u otros:
+- Extraer lo que sea visible siguiendo la misma lógica: datos del REMITENTE
+
+SISTEMA DE LLAVES Bre-B EN COLOMBIA:
+Las llaves son identificadores únicos para recibir/enviar dinero entre cualquier banco. Tipos:
+1. Celular (10 dígitos, empieza en 3)
+2. Documento de identidad (cédula)
+3. Correo electrónico
+4. Alias alfanumérico (empieza con @, ej: @Pzt579)
+5. Código de comercio
+Si aparece una llave en el comprobante, ponla en numero_cuenta_o_llave y el tipo en tipo_cuenta_o_llave.
+
+REGLAS ESTRICTAS:
+1. NUNCA inventes ni completes datos. Si un dato no es legible o no aparece, usa null.
+2. numero_comprobante: puede ser numérico O alfanumérico. Transcríbelo exactamente como aparece.
+3. numero_cuenta_o_llave: acepta dígitos, celulares, llaves alfanuméricas (@algo), cuentas parcialmente ocultas (*6318). Transcribe exactamente como aparece.
+4. nombre_cliente: el nombre del REMITENTE. Si está oculto con asteriscos, transcríbelo así (ej: "Jua*** Jos*** Vil***"). Si solo aparece el nombre del DESTINO y no del remitente, pon null.
+5. valor_pago: entero en pesos colombianos, sin puntos, comas ni $. Ejemplo: 150000.
+6. fecha_pago: formato AAAA-MM-DD."""
 
 
 # ---------------------------------------------------------------------------
@@ -211,6 +259,24 @@ def listar_imagenes():
     )
 
 
+def mapear_columnas(encabezados):
+    """Devuelve {columna: posicion desde 0} según la fila de encabezados del Excel.
+
+    Reconoce también los nombres viejos (COLUMNAS_VIEJAS). Las columnas que no
+    estén en el encabezado no aparecen en el resultado. Si no se reconoce
+    ningún encabezado, devuelve el orden de COLUMNAS.
+    """
+    posiciones = {}
+    for indice, valor in enumerate(encabezados or ()):
+        nombre = "" if valor is None else str(valor).strip().lower()
+        nombre = COLUMNAS_VIEJAS.get(nombre, nombre)
+        if nombre in COLUMNAS and nombre not in posiciones:
+            posiciones[nombre] = indice
+    if not posiciones:
+        return {columna: indice for indice, columna in enumerate(COLUMNAS)}
+    return posiciones
+
+
 def cargar_comprobantes_existentes(ruta=None):
     """Lee el Excel existente y devuelve el conjunto de comprobantes ya registrados."""
     ruta = leer_ruta_excel() if ruta is None else Path(ruta)
@@ -220,7 +286,11 @@ def cargar_comprobantes_existentes(ruta=None):
             libro = load_workbook(ruta, read_only=True)
             try:
                 hoja = libro.active
-                indice = COLUMNAS.index("numero_comprobante")
+                # La columna se ubica por el nombre del encabezado, así sirve
+                # para archivos con el orden de columnas viejo o nuevo.
+                encabezados = next(hoja.iter_rows(max_row=1, values_only=True), ())
+                indice = mapear_columnas(encabezados).get(
+                    "numero_comprobante", COLUMNAS.index("numero_comprobante"))
                 for fila in hoja.iter_rows(min_row=2, values_only=True):
                     if fila and len(fila) > indice and fila[indice] is not None:
                         numero = str(fila[indice]).strip()
@@ -243,46 +313,122 @@ RELLENO_REVISAR = PatternFill("solid", fgColor="FFF9C4")  # amarillo claro
 
 
 def _ajustar_anchos(hoja, valores):
-    """Ensancha cada columna si el valor nuevo es más largo que el ancho actual."""
-    for indice, valor in enumerate(valores, start=1):
-        letra = get_column_letter(indice)
+    """Ensancha cada columna si el valor nuevo es más largo que el ancho actual.
+    'valores' son pares (numero de columna desde 1, valor)."""
+    for numero, valor in valores:
+        letra = get_column_letter(numero)
         ancho = len(str(valor)) + 3
         actual = hoja.column_dimensions[letra].width or 0
         if ancho > actual:
             hoja.column_dimensions[letra].width = ancho
 
 
+def _escribir_encabezado(hoja, numero_columna, nombre):
+    """Escribe un encabezado formateado en la fila 1 y ajusta el ancho."""
+    celda = hoja.cell(row=1, column=numero_columna, value=nombre)
+    celda.font = FUENTE_ENCABEZADO
+    celda.fill = RELLENO_ENCABEZADO
+    _ajustar_anchos(hoja, [(numero_columna, nombre)])
+
+
+def _escribir_encabezados(hoja):
+    """Escribe en la fila 1 todos los encabezados de COLUMNAS, formateados."""
+    for numero, columna in enumerate(COLUMNAS, start=1):
+        _escribir_encabezado(hoja, numero, columna)
+
+
+def _anchos_por_columna(hoja):
+    """Devuelve {numero de columna: ancho}. Excel agrupa columnas contiguas
+    del mismo ancho en un solo rango (min-max); aquí se separan."""
+    anchos = {}
+    for letra, dimension in hoja.column_dimensions.items():
+        if dimension.width is None:
+            continue
+        inicio = dimension.min or column_index_from_string(letra)
+        fin = min(dimension.max or inicio, hoja.max_column)
+        for numero in range(inicio, fin + 1):
+            anchos[numero] = dimension.width
+    return anchos
+
+
+def _migrar_columnas_viejas(hoja):
+    """Actualiza un Excel creado con las columnas de versiones anteriores.
+
+    Renombra los encabezados viejos (COLUMNAS_VIEJAS) e inserta la columna
+    tipo_cuenta_o_llave justo después de numero_cuenta_o_llave; las filas
+    viejas quedan con esa celda vacía. Si el archivo ya está al día no toca
+    nada. Devuelve True si hubo cambios (se guardan junto con la fila nueva).
+    """
+    cambios = False
+    encabezados = {}
+    for celda in hoja[1]:
+        nombre = "" if celda.value is None else str(celda.value).strip().lower()
+        if nombre in COLUMNAS_VIEJAS:
+            nombre = COLUMNAS_VIEJAS[nombre]
+            celda.value = nombre
+            _ajustar_anchos(hoja, [(celda.column, nombre)])
+            cambios = True
+        encabezados.setdefault(nombre, celda.column)
+
+    columna_cuenta = encabezados.get("numero_cuenta_o_llave")
+    if columna_cuenta is None or "tipo_cuenta_o_llave" in encabezados:
+        return cambios
+
+    # insert_cols mueve las celdas con su formato (rellenos, #,##0), pero NO
+    # los anchos de columna: se guardan antes y se reubican después.
+    posicion = columna_cuenta + 1
+    anchos = _anchos_por_columna(hoja)
+    hoja.insert_cols(posicion)
+    hoja.column_dimensions.clear()
+    for numero, ancho in anchos.items():
+        destino = numero if numero < posicion else numero + 1
+        hoja.column_dimensions[get_column_letter(destino)].width = ancho
+    _escribir_encabezado(hoja, posicion, "tipo_cuenta_o_llave")
+    return True
+
+
 def abrir_libro(ruta=None):
-    """Abre el Excel configurado, o crea un libro nuevo con los encabezados formateados."""
+    """Abre el Excel configurado, o crea un libro nuevo con los encabezados formateados.
+    Si el archivo existe y tiene las columnas viejas, las migra (ver arriba)."""
     ruta = leer_ruta_excel() if ruta is None else Path(ruta)
     if ruta.exists():
         libro = load_workbook(ruta)
-        return libro, libro.active
+        hoja = libro.active
+        if hoja.max_row == 1 and all(celda.value is None for celda in hoja[1]):
+            _escribir_encabezados(hoja)  # hoja vacía: se le ponen los encabezados
+        else:
+            _migrar_columnas_viejas(hoja)
+        return libro, hoja
     libro = Workbook()
     hoja = libro.active
     hoja.title = "Comprobantes"
-    hoja.append(COLUMNAS)
-    for celda in hoja[1]:
-        celda.font = FUENTE_ENCABEZADO
-        celda.fill = RELLENO_ENCABEZADO
-    _ajustar_anchos(hoja, COLUMNAS)
+    _escribir_encabezados(hoja)
     return libro, hoja
 
 
 def agregar_fila(hoja, fila):
-    """Agrega la fila (dict) al final de la hoja y aplica los formatos."""
-    valores = [fila[columna] for columna in COLUMNAS]
-    hoja.append(valores)
-    numero_fila = hoja.max_row
+    """Agrega la fila (dict) al final de la hoja y aplica los formatos.
 
-    celda_valor = hoja.cell(row=numero_fila, column=COLUMNAS.index("valor_pago") + 1)
-    celda_valor.number_format = "#,##0"
+    Cada valor se escribe en la columna cuyo encabezado coincide por nombre,
+    no por posición. Si al Excel le falta alguna columna, se agrega al final.
+    """
+    encabezados = [celda.value for celda in hoja[1]]
+    posiciones = mapear_columnas(encabezados)
+    for columna in COLUMNAS:
+        if columna not in posiciones:
+            posiciones[columna] = hoja.max_column
+            _escribir_encabezado(hoja, hoja.max_column + 1, columna)
 
-    celda_estado = hoja.cell(row=numero_fila, column=COLUMNAS.index("estado") + 1)
-    if fila["estado"] == "OK":
-        celda_estado.fill = RELLENO_OK
-    else:
-        celda_estado.fill = RELLENO_REVISAR
+    numero_fila = hoja.max_row + 1
+    valores = []
+    for columna in COLUMNAS:
+        numero = posiciones[columna] + 1
+        celda = hoja.cell(row=numero_fila, column=numero, value=fila.get(columna, ""))
+        valores.append((numero, celda.value))
+        if columna == "valor_pago":
+            celda.number_format = "#,##0"
+        elif columna == "estado":
+            celda.fill = RELLENO_OK if fila.get("estado") == "OK" else RELLENO_REVISAR
 
     _ajustar_anchos(hoja, valores)
 
@@ -388,11 +534,23 @@ def fecha_valida(texto):
         return False
 
 
+def leer_cuenta_o_llave(datos):
+    """Cuenta, celular o llave del remitente. Si el modelo devolviera todavía
+    la clave vieja numero_cuenta, se usa como respaldo."""
+    cuenta = limpiar_texto(datos.get("numero_cuenta_o_llave"))
+    return cuenta or limpiar_texto(datos.get("numero_cuenta"))
+
+
 def validar(datos, comprobantes_existentes):
-    """Aplica validaciones. Devuelve (estado, lista de motivos)."""
+    """Aplica validaciones. Devuelve (estado, lista de motivos).
+
+    numero_comprobante puede ser alfanumérico y numero_cuenta_o_llave acepta
+    dígitos, celulares, llaves (@alias, correo) y cuentas parciales (*6318):
+    solo se exige que existan. tipo_cuenta_o_llave es informativo y no se valida.
+    """
     motivos = []
     comprobante = limpiar_texto(datos.get("numero_comprobante"))
-    cuenta = limpiar_texto(datos.get("numero_cuenta"))
+    cuenta = leer_cuenta_o_llave(datos)
     nombre = limpiar_texto(datos.get("nombre_cliente"))
     valor = normalizar_valor(datos.get("valor_pago"))
     fecha = limpiar_texto(datos.get("fecha_pago"))
@@ -403,9 +561,7 @@ def validar(datos, comprobantes_existentes):
         motivos.append("comprobante ya registrado antes (posible pago duplicado)")
 
     if not cuenta:
-        motivos.append("falta el numero de cuenta")
-    elif not cuenta.isdigit():
-        motivos.append("cuenta con caracteres no numericos (posible dato oculto)")
+        motivos.append("falta el numero de cuenta o llave")
 
     if not nombre:
         motivos.append("falta el nombre del cliente")
@@ -431,7 +587,8 @@ def construir_fila(archivo, datos, estado):
         "archivo_origen": archivo.name,
         "banco_app": limpiar_texto(datos.get("banco_app")),
         "numero_comprobante": limpiar_texto(datos.get("numero_comprobante")),
-        "numero_cuenta": limpiar_texto(datos.get("numero_cuenta")),
+        "numero_cuenta_o_llave": leer_cuenta_o_llave(datos),
+        "tipo_cuenta_o_llave": limpiar_texto(datos.get("tipo_cuenta_o_llave")),
         "nombre_cliente": limpiar_texto(datos.get("nombre_cliente")),
         "valor_pago": valor if valor is not None else "",
         "fecha_pago": limpiar_texto(datos.get("fecha_pago")),

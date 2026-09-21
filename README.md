@@ -16,18 +16,55 @@
 
 ## 🤔 ¿Qué hace este sistema?
 
-Recibe **imágenes de comprobantes de pago colombianos** (fotos o capturas de pantalla de **Bancolombia, Nequi y Daviplata**) y usa inteligencia artificial (Google Gemini Flash) para extraer automáticamente:
+Recibe **imágenes de comprobantes de pago colombianos** (fotos o capturas de pantalla de **Bancolombia, Nequi, Daviplata, Bre-B, Bold y PSE**) y usa inteligencia artificial (Google Gemini Flash) para extraer automáticamente los datos de **quien envió el pago** (el remitente):
 
 | Dato | Ejemplo |
 |---|---|
 | 🏦 Banco o app | Bancolombia |
-| 🔢 Número de comprobante | 154145150 |
-| 💳 Número de cuenta | 2440010654 |
+| 🔢 Número de comprobante | 154145150 (también puede traer letras, ej: `M1234567`) |
+| 💳 Número de cuenta o llave | 2440010654 · 3001234567 · @Pzt579 |
+| 🔑 Tipo de cuenta o llave | Cuenta de Ahorros · Celular · Llave alias |
 | 👤 Nombre del cliente | Julio Hernandez |
 | 💰 Valor del pago | $30.000 |
 | 📅 Fecha del pago | 2026-08-15 |
 
+> 🆕 **Novedad:** ahora también soporta comprobantes de **Bre-B** y **Bold**, y reconoce el **sistema de llaves** colombiano (celular, documento, correo o alias `@`). Ver [🔑 Sistema de Llaves Bre-B](#-sistema-de-llaves-bre-b).
+
 Todo queda guardado en un **archivo Excel con formato profesional** (por defecto `salida/comprobantes.xlsx`, la ruta se puede cambiar en `config.txt`) — con colores según el estado de cada comprobante y detección de pagos duplicados.
+
+### 📋 Columnas del Excel
+
+| # | Columna | ¿Qué contiene? |
+|---|---|---|
+| 1 | `fecha_procesado` | Fecha y hora en que se procesó la imagen |
+| 2 | `archivo_origen` | Nombre de la imagen original |
+| 3 | `banco_app` | Bancolombia, Nequi, Daviplata, Bre-B, Bold o PSE |
+| 4 | `numero_comprobante` | Número o código del comprobante (puede ser **alfanumérico**) |
+| 5 | `numero_cuenta_o_llave` | Número de cuenta, celular o **llave Bre-B** del remitente |
+| 6 | `tipo_cuenta_o_llave` | Cuenta de Ahorros, Cuenta Corriente, Celular, Llave alias, Llave documento, Llave correo... |
+| 7 | `nombre_cliente` | Nombre de quien envió el pago |
+| 8 | `valor_pago` | Valor del pago |
+| 9 | `fecha_pago` | Fecha del pago |
+| 10 | `estado` | **OK** o **REVISAR** |
+
+> 🔁 **¿Ya tenías un Excel de antes?** No hay que hacer nada: la columna vieja `numero_cuenta` se **migra sola** a `numero_cuenta_o_llave` (y se agrega `tipo_cuenta_o_llave`) la próxima vez que se guarde un comprobante.
+
+---
+
+## 🔑 Sistema de Llaves Bre-B
+
+**Bre-B** es el sistema de pagos inmediatos de Colombia. Funciona con **llaves**: identificadores únicos que permiten **enviar y recibir dinero entre cualquier banco o app del país, sin necesidad de conocer el número de cuenta**.
+
+Hay **4 tipos de llave**, y el sistema las reconoce todas:
+
+| Tipo de llave | ¿Cómo es? | Ejemplo |
+|---|---|---|
+| 📱 Celular | 10 dígitos, empieza en **3** | 3001234567 |
+| 🪪 Documento de identidad | El número de cédula | 1023456789 |
+| 📧 Correo electrónico | Una dirección de correo | cliente@correo.com |
+| 🔤 Alias alfanumérico | Empieza con **@** | @Pzt579 |
+
+> 📊 **¿Dónde queda en el Excel?** La llave se guarda en la columna **`numero_cuenta_o_llave`** y su tipo en **`tipo_cuenta_o_llave`**. En la interfaz se ven como **"CUENTA / LLAVE"** y **"TIPO CUENTA / LLAVE"**.
 
 ---
 
