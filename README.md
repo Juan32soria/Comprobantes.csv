@@ -14,6 +14,30 @@
 
 ---
 
+## 📥 Descargar el sistema
+
+### Opción 1: Descargar el .exe (para cualquier PC, sin Python)
+1. Ir a la carpeta compartida de Google Drive: [link que el administrador comparta]
+2. Descargar la carpeta completa "Extractor Comprobantes"
+3. Abrir "Extractor Comprobantes.exe"
+4. La primera vez pide la clave de API — pegarla y dar Guardar
+
+### Opción 2: Clonar desde GitHub (para PCs con Python)
+1. Abrir la terminal o PowerShell
+2. Ejecutar: `git clone https://github.com/Juan32soria/Comprobantes.csv.git`
+3. Entrar a la carpeta: `cd Comprobantes.csv`
+4. Instalar dependencias: doble clic en `INSTALAR.bat` (Windows) o ejecutar `./INSTALAR.sh` (Mac)
+5. Copiar `config.ejemplo.txt` como `config.txt` y pegar la API key
+6. Abrir con: doble clic en `ABRIR.bat` (Windows) o `ABRIR.command` (Mac)
+
+### ¿Cómo obtener la clave de API? (gratis)
+1. Entrar a https://aistudio.google.com/apikey con una cuenta de Google
+2. Clic en "Create API Key"
+3. Copiar la clave (empieza con AIza...)
+4. No necesita tarjeta de crédito
+
+---
+
 ## 🤔 ¿Qué hace este sistema?
 
 Recibe **imágenes de comprobantes de pago colombianos** (fotos o capturas de pantalla de **Bancolombia, Nequi, Daviplata, Bre-B, Bold y PSE**) y usa inteligencia artificial (Google Gemini Flash) para extraer automáticamente los datos de **quien envió el pago** (el remitente):
