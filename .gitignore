@@ -15,3 +15,9 @@ build/
 *.ico
 Extractor Comprobantes/
 errores.log
+
+# Versión web (Next.js)
+web/.env.local
+web/node_modules/
+web/.next/
+!web/src/app/favicon.ico

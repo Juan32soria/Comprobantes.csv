@@ -1,0 +1,81 @@
+@import "tailwindcss";
+
+/* Paleta oscura fija (se fuerza sin importar la preferencia del sistema). */
+:root {
+  --fondo: #0b0f17;
+  --superficie: #121826;
+  --superficie-2: #1a2233;
+  --borde: #26304a;
+  --texto: #e6e9f0;
+  --apagado: #8b94a7;
+  --acento: #e11d48;
+  --acento-hover: #be123c;
+  --ok: #22c55e;
+  --alerta: #f59e0b;
+  --error: #f43f5e;
+  --info: #60a5fa;
+  color-scheme: dark;
+}
+
+/* Tokens expuestos a Tailwind: bg-fondo, text-apagado, border-borde, etc. */
+@theme inline {
+  --color-fondo: var(--fondo);
+  --color-superficie: var(--superficie);
+  --color-superficie-2: var(--superficie-2);
+  --color-borde: var(--borde);
+  --color-texto: var(--texto);
+  --color-apagado: var(--apagado);
+  --color-acento: var(--acento);
+  --color-acento-hover: var(--acento-hover);
+  --color-ok: var(--ok);
+  --color-alerta: var(--alerta);
+  --color-error: var(--error);
+  --color-info: var(--info);
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+}
+
+html {
+  background: var(--fondo);
+}
+
+body {
+  background: var(--fondo);
+  color: var(--texto);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Anillo de enfoque visible para teclado. */
+:focus-visible {
+  outline: 2px solid var(--info);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Barras de desplazamiento discretas. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--borde) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--borde);
+  border-radius: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Animación del spinner */
+@keyframes girar {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.girar {
+  animation: girar 0.8s linear infinite;
+}

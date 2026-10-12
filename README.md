@@ -7,7 +7,8 @@
 ![Python](https://img.shields.io/badge/Python-3.8+-blue)
 ![Gemini](https://img.shields.io/badge/AI-Gemini_Flash-orange)
 ![Costo](https://img.shields.io/badge/Costo-Gratis-green)
-![Plataforma](https://img.shields.io/badge/Plataforma-Windows-lightgrey)
+![Plataforma](https://img.shields.io/badge/Plataforma-Windows_|_Web-lightgrey)
+![Vercel](https://img.shields.io/badge/Web-Next.js_+_Vercel-black)
 ![Idioma](https://img.shields.io/badge/Idioma-Español-red)
 
 </div>
@@ -35,6 +36,64 @@
 2. Clic en "Create API Key"
 3. Copiar la clave (empieza con AIza...)
 4. No necesita tarjeta de crédito
+
+---
+
+## 🌐 Versión Web (Vercel)
+
+Además de la app de escritorio, el repositorio trae una **versión web** en la carpeta **`web/`** (Next.js). Se sube a **Vercel** gratis y funciona desde cualquier navegador, incluido el celular: se arrastran las fotos de los comprobantes, se da clic en **PROCESAR** y cada fila queda guardada **automáticamente en un Google Sheet compartido**. No hay que instalar nada en los PCs del equipo.
+
+### 🚀 Deploy en Vercel (una sola vez)
+
+> 1️⃣ Entrar a [vercel.com](https://vercel.com) con la cuenta de GitHub y dar clic en **"Add New… → Project"**
+>
+> 2️⃣ **Importar** el repositorio `Comprobantes.csv`
+>
+> 3️⃣ En **"Root Directory"** dar clic en **Edit** y seleccionar la carpeta **`web`** (muy importante: el proyecto Next.js vive ahí, no en la raíz)
+>
+> 4️⃣ En **"Environment Variables"** agregar las tres variables de la tabla de abajo
+>
+> 5️⃣ Clic en **Deploy**. En uno o dos minutos Vercel entrega una URL tipo `https://comprobantes.vercel.app`
+>
+> 🔁 Cada `git push` a `main` vuelve a desplegar la web automáticamente.
+
+### 🔑 Variables de entorno necesarias en Vercel
+
+| Variable | ¿Qué es? | ¿De dónde sale? |
+|---|---|---|
+| `GEMINI_API_KEY` | Clave de la API de Gemini (la misma de la app de escritorio) | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
+| `GOOGLE_SHEETS_ID` | ID del Google Sheet donde se guardan los comprobantes | Es la parte larga de la URL del Sheet: `https://docs.google.com/spreadsheets/d/`**`ESTE_ID`**`/edit` |
+| `GOOGLE_SERVICE_ACCOUNT` | **Todo el JSON** de la cuenta de servicio de Google, pegado en una sola línea | Ver pasos abajo |
+
+> 📝 Para probar en local: copiar `web/.env.example` como `web/.env.local`, llenar las tres variables y ejecutar `npm install` y `npm run dev` dentro de `web/`. El archivo `.env.local` está en `.gitignore` y **no se sube** al repositorio.
+
+#### 🤖 Crear la cuenta de servicio de Google (para que la web pueda escribir en el Sheet)
+
+> 1️⃣ Entrar a [console.cloud.google.com](https://console.cloud.google.com), crear un proyecto (o usar uno existente)
+>
+> 2️⃣ En **APIs y servicios → Biblioteca**, buscar **"Google Sheets API"** y dar clic en **Habilitar**
+>
+> 3️⃣ En **APIs y servicios → Credenciales → Crear credenciales → Cuenta de servicio**. Ponerle un nombre (ej: `comprobantes-web`) y crear
+>
+> 4️⃣ Abrir la cuenta de servicio → pestaña **Claves → Agregar clave → Crear clave nueva → JSON**. Se descarga un archivo `.json`
+>
+> 5️⃣ Abrir ese archivo con el Bloc de notas, **copiar todo el contenido** y pegarlo como valor de `GOOGLE_SERVICE_ACCOUNT` en Vercel
+>
+> 6️⃣ Crear un Google Sheet nuevo (puede estar vacío) y **compartirlo** con el correo de la cuenta de servicio (sale en el JSON como `client_email`, termina en `.iam.gserviceaccount.com`) con permiso de **Editor**
+>
+> 7️⃣ Copiar el ID de ese Sheet en `GOOGLE_SHEETS_ID`
+
+> ⚠️ Si la web muestra **"sin permiso en la hoja"**, casi siempre es porque falta el paso 6 (compartir el Sheet con la cuenta de servicio).
+
+### 📊 ¿Cómo se guardan los datos?
+
+- Cada comprobante procesado se **agrega como una fila nueva al final** del Google Sheet. Nunca se sobreescribe nada.
+- Si el Sheet está vacío, la web escribe sola la fila de encabezados.
+- Las columnas son las mismas del Excel de escritorio: `fecha_procesado`, `archivo_origen`, `banco_app`, `numero_comprobante`, `numero_cuenta_o_llave`, `tipo_cuenta_o_llave`, `nombre_cliente`, `valor_pago`, `fecha_pago`, `estado`.
+- La detección de **duplicados** compara el número de comprobante contra lo que ya hay en el Sheet, igual que la versión de escritorio.
+- Desde la web hay un botón **"Abrir Google Sheet"** que lleva directo a la hoja, y una tabla de **historial** con los últimos comprobantes.
+
+> 🔢 La web usa el mismo plan gratuito de Gemini (1.500 comprobantes al día). Las imágenes se envían **una por una**, así que un lote de 50 fotos tarda unos minutos: hay que dejar la pestaña abierta hasta que termine.
 
 ---
 
@@ -287,6 +346,7 @@ extractor-comprobantes/
 ├── empaquetador.bat       → 🔨 compila el .exe y arma la carpeta "Extractor Comprobantes"
 ├── build.bat / build.py   → 🔨 solo compila el .exe en dist/ (usa PyInstaller)
 ├── make_icon.py           → 🎨 genera icon.ico (solo si no existe)
+├── web/                   → 🌐 versión web (Next.js + Google Sheets, se despliega en Vercel)
 ├── entrada/               → 📥 aquí van las imágenes nuevas
 ├── procesados/            → ✅ imágenes que salieron OK (se mueven solas)
 ├── revision_manual/       → ⚠️ imágenes que necesitan revisión (se mueven solas)
