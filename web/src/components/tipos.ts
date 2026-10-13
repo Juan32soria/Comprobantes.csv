@@ -61,5 +61,13 @@ export type Resultado =
 /** Progreso del lote en curso. */
 export type Progreso = { indice: number; total: number; nombre: string };
 
-/** Resumen al terminar un lote. */
-export type Resumen = { total: number; ok: number; revisar: number; error: number };
+/** Resumen al terminar un lote. `detenido` indica que el usuario lo paró antes de acabar. */
+export type Resumen = {
+  total: number;
+  ok: number;
+  revisar: number;
+  error: number;
+  /** Cuántos se alcanzaron a procesar (= ok + revisar + error). */
+  procesados: number;
+  detenido: boolean;
+};

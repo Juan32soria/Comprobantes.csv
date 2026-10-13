@@ -33,7 +33,7 @@ export function mensajeErrorGemini(error: unknown): string {
     return "Se agotó la cuota de Gemini (límite por minuto o por día). Espera un momento y vuelve a intentar.";
   }
   if (codigo === 401 || codigo === 403 || texto.includes("api key") || texto.includes("api_key") || texto.includes("authenticate") || texto.includes("permission_denied") || texto.includes("permission denied")) {
-    return "La clave de API de Gemini no es válida. Revisa GEMINI_API_KEY (se obtiene gratis en https://aistudio.google.com/apikey).";
+    return "La clave de API de Gemini no es válida. El administrador debe configurar la clave de API en Vercel (GEMINI_API_KEY, se obtiene gratis en https://aistudio.google.com/apikey).";
   }
   if (codigo === 404 || texto.includes("not found") || texto.includes("is not supported")) {
     return "El modelo de Gemini no está disponible para esta clave. Verifica el nombre del modelo o la cuenta.";

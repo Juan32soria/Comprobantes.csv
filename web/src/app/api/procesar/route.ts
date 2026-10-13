@@ -140,7 +140,7 @@ export async function POST(request: Request): Promise<Response> {
   // 2. Configuración de Gemini
   if (!geminiConfigurado()) {
     return json(
-      { ok: false, error: "Falta configurar GEMINI_API_KEY en el servidor." },
+      { ok: false, error: "El administrador debe configurar la clave de API en Vercel (variable GEMINI_API_KEY)." },
       500,
     );
   }

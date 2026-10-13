@@ -16,10 +16,10 @@ function describirEstado({ configurado, cargando, errorCarga }: Props): { tono: 
       return { tono: "ok", texto: "Conectado a Google Sheets" };
     }
     if (!configurado.gemini && !configurado.sheets) {
-      return { tono: "alerta", texto: "Falta configurar Gemini y Google Sheets" };
+      return { tono: "alerta", texto: "Falta clave de API y Google Sheets: el administrador debe configurarlas en Vercel" };
     }
-    if (!configurado.gemini) return { tono: "alerta", texto: "Falta clave de Gemini" };
-    return { tono: "alerta", texto: "Falta configurar Google Sheets" };
+    if (!configurado.gemini) return { tono: "alerta", texto: "El administrador debe configurar la clave de API en Vercel" };
+    return { tono: "alerta", texto: "El administrador debe configurar Google Sheets en Vercel" };
   }
   if (!cargando && errorCarga) {
     return { tono: "alerta", texto: "No se pudo verificar la configuración" };

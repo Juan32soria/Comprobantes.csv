@@ -47,9 +47,18 @@ export function BarraProgreso({ progreso, resumen }: Props) {
     return (
       <p
         role="status"
-        className="rounded-lg border border-borde bg-superficie px-4 py-3 text-sm"
+        className={`rounded-lg border bg-superficie px-4 py-3 text-sm ${
+          resumen.detenido ? "border-alerta/50" : "border-borde"
+        }`}
       >
-        <span className="font-medium">{plural(resumen.total, "procesado", "procesados")}</span>
+        {resumen.detenido && (
+          <span className="mb-1 block font-medium text-alerta">
+            Proceso detenido. {resumen.procesados} de {resumen.total}{" "}
+            {resumen.total === 1 ? "comprobante procesado" : "comprobantes procesados"}. Puedes
+            continuar después.
+          </span>
+        )}
+        <span className="font-medium">{plural(resumen.procesados, "procesado", "procesados")}</span>
         <span className="text-apagado"> · </span>
         <span className="text-ok">{resumen.ok} OK</span>
         <span className="text-apagado"> · </span>

@@ -31,9 +31,11 @@ export default function Pagina() {
 
         <Acciones
           procesando={proc.procesando}
+          deteniendo={proc.deteniendo}
           hayPendientes={proc.hayPendientes}
           hayAlgo={proc.archivos.length > 0 || proc.resultados.length > 0}
           onProcesar={() => void proc.procesar()}
+          onDetener={proc.detener}
           onLimpiar={proc.limpiar}
         />
 

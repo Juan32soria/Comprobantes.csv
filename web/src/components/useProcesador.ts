@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import type {
   ArchivoEnCola,
   EstadoArchivo,
@@ -66,6 +66,10 @@ export function useProcesador(alTerminar?: () => void) {
   const [progreso, setProgreso] = useState<Progreso | null>(null);
   const [resumen, setResumen] = useState<Resumen | null>(null);
   const [procesando, setProcesando] = useState(false);
+  // Pedido de detener: se muestra "Deteniendo…" hasta que acabe la imagen en curso.
+  const [deteniendo, setDeteniendo] = useState(false);
+  // Flag de cancelación: se consulta antes de cada imagen; nunca corta una a la mitad.
+  const cancelarRef = useRef(false);
 
   const agregar = useCallback((nuevos: File[]) => {
     setArchivos((prev) => {
@@ -103,10 +107,24 @@ export function useProcesador(alTerminar?: () => void) {
 
     setProcesando(true);
     setResumen(null);
-    const conteo: Resumen = { total: pendientes.length, ok: 0, revisar: 0, error: 0 };
+    cancelarRef.current = false;
+    setDeteniendo(false);
+    const conteo: Resumen = {
+      total: pendientes.length,
+      ok: 0,
+      revisar: 0,
+      error: 0,
+      procesados: 0,
+      detenido: false,
+    };
 
     // Secuencial a propósito: la capa gratuita de Gemini limita las peticiones por minuto.
     for (let i = 0; i < pendientes.length; i++) {
+      // Si el usuario pidió detener, los archivos restantes quedan "pendiente" para después.
+      if (cancelarRef.current) {
+        conteo.detenido = true;
+        break;
+      }
       const actual = pendientes[i];
       setProgreso({ indice: i + 1, total: pendientes.length, nombre: actual.file.name });
       actualizarEstado(actual.id, "procesando");
@@ -122,14 +140,24 @@ export function useProcesador(alTerminar?: () => void) {
         conteo.error++;
         actualizarEstado(actual.id, "error", resultado.error);
       }
+      conteo.procesados++;
       setResultados((prev) => [resultado, ...prev]);
     }
 
     setProgreso(null);
     setResumen(conteo);
     setProcesando(false);
+    setDeteniendo(false);
+    cancelarRef.current = false;
     alTerminar?.();
   }, [archivos, procesando, actualizarEstado, alTerminar]);
+
+  /** Pide detener el lote. La imagen en curso termina y se guarda; el resto queda pendiente. */
+  const detener = useCallback(() => {
+    if (!procesando) return;
+    cancelarRef.current = true;
+    setDeteniendo(true);
+  }, [procesando]);
 
   const hayPendientes = archivos.some((a) => a.estado === "pendiente");
 
@@ -139,10 +167,12 @@ export function useProcesador(alTerminar?: () => void) {
     progreso,
     resumen,
     procesando,
+    deteniendo,
     hayPendientes,
     agregar,
     quitar,
     limpiar,
     procesar,
+    detener,
   };
 }
