@@ -1,9 +1,9 @@
 // Tipos y lógica pura de validación/construcción de filas.
 // Portado de procesar_comprobantes.py (parsear_json, validar, construir_fila, ...).
 
-export const MODELO = "gemini-3.8-flash";
-// Respaldo si el principal responde 503 (saturado): más ligero, suele tener menos demanda.
-export const MODELO_RESPALDO = "gemini-3.5-flash-lite";
+export const MODELO = "gemini-3.5-flash-lite";
+// Principal: flash-lite (menos tokens, más cuota). Respaldo si responde 503 (saturado): el flash completo.
+export const MODELO_RESPALDO = "gemini-3.8-flash";
 export const LADO_MAXIMO = 1568; // px en el lado más largo
 
 export const COLUMNAS = [

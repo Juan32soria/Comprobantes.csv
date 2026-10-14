@@ -72,10 +72,10 @@ ARCHIVO_CONFIG = BASE / "config.txt"
 # Ruta del Excel si config.txt no define RUTA_EXCEL (relativa a BASE)
 RUTA_EXCEL_POR_DEFECTO = "salida/comprobantes.xlsx"
 
-# Modelo de Gemini Flash (gratuito, 1500 solicitudes/día, 15/minuto)
-MODELO = "gemini-3.8-flash"
-# Respaldo si el principal responde 503 (saturado): más ligero, menos demanda
-MODELO_RESPALDO = "gemini-3.5-flash-lite"
+# Modelo principal: Flash-Lite (gratuito; menos tokens y más cuota que el Flash completo)
+MODELO = "gemini-3.5-flash-lite"
+# Respaldo si el principal responde 503 (saturado): el Flash completo
+MODELO_RESPALDO = "gemini-3.8-flash"
 
 LADO_MAXIMO = 1568  # px en el lado más largo
 EXTENSIONES = {".jpg", ".jpeg", ".png", ".webp"}
