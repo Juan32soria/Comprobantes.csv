@@ -8,7 +8,7 @@ Resultado:  dist/Extractor Comprobantes.exe
 
 Si no existe icon.ico lo genera con make_icon.py. Requiere tener instalado
 PyInstaller y las dependencias del proyecto:
-    pip install pyinstaller google-genai pillow openpyxl customtkinter
+    pip install pyinstaller requests pillow openpyxl customtkinter
 Opcional (cámara web, se incluye en el .exe solo si está instalado):
     pip install opencv-python
 """
@@ -27,7 +27,7 @@ EXE = DIST / (NOMBRE + (".exe" if sys.platform.startswith("win") else ""))
 
 # Paquetes cuyos datos y submódulos deben incluirse completos
 COLLECT_ALL = [
-    "google.genai",
+
     "customtkinter",
 ]
 

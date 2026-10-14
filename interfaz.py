@@ -160,7 +160,7 @@ try:
     )
 except (ImportError, SystemExit, RuntimeError, EOFError):
     # procesar_comprobantes.py termina el programa si faltan dependencias
-    # (google-genai, Pillow u openpyxl). Sin consola solo podemos avisar así.
+    # (requests, Pillow u openpyxl). Sin consola solo podemos avisar así.
     registrar_error("No se pudo importar procesar_comprobantes")
     try:
         raiz = tk.Tk()
@@ -190,9 +190,9 @@ if ctk is None:
     sys.exit(1)
 
 try:
-    from google import genai
+    import requests
 except ImportError:
-    genai = None
+    requests = None
 
 try:
     from PIL import Image, ImageDraw, ImageFont, ImageTk
@@ -905,7 +905,7 @@ class FormularioConfiguracion(ctk.CTkFrame):
                      text_color=COLOR_TEXTO, anchor="w")\
             .grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 4))
         self.entrada_clave = ctk.CTkEntry(
-            self, placeholder_text="Pega aquí la clave (empieza con AIza...)",
+            self, placeholder_text="Pega aquí la clave (empieza con AIza... o AQ....)",
             show="•", height=38, fg_color=COLOR_FONDO, border_color=COLOR_BORDE,
         )
         self.entrada_clave.grid(row=1, column=0, sticky="ew")
@@ -1015,10 +1015,10 @@ class FormularioConfiguracion(ctk.CTkFrame):
                 "La clave no debe tener espacios. Revisa que la hayas copiado completa.",
                 parent=ventana)
             return
-        if not clave.startswith("AIza"):
+        if not clave.startswith(("AIza", "AQ.")):
             if not messagebox.askyesno(
                     "Revisar la clave",
-                    "Las claves de Gemini normalmente empiezan con \"AIza\".\n"
+                    "Las claves de Gemini normalmente empiezan con \"AIza\" o \"AQ.\".\n"
                     "¿Quieres guardarla de todos modos?", parent=ventana):
                 return
 
@@ -2050,10 +2050,10 @@ class Aplicacion(ctk.CTk):
 
         self.actualizar_estado_api()
 
-        if genai is None:
+        if requests is None:
             messagebox.showerror(
                 "Faltan dependencias",
-                "No está instalada la librería de Google Gemini.\n"
+                "No está instalada la librería requests (necesaria para hablar con Gemini).\n"
                 "Solución: haz doble clic en INSTALAR.bat (o INSTALAR.command en Mac) "
                 "y espera a que termine.",
             )
@@ -2107,7 +2107,8 @@ class Aplicacion(ctk.CTk):
         try:
             ruta = leer_ruta_excel()
             comprobantes_existentes = cargar_comprobantes_existentes(ruta)
-            cliente = genai.Client(api_key=clave)
+            # Con la API REST no hay objeto cliente: se pasa la clave directamente.
+            cliente = clave
 
             for indice, archivo in enumerate(imagenes, start=1):
                 en_ui(self.mostrar_estado,

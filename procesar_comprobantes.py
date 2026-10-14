@@ -14,6 +14,7 @@ siempre se agrega al final (nunca se sobreescribe).
 Uso normal: doble clic en PROCESAR.bat
 """
 
+import base64
 import io
 import json
 import os
@@ -28,8 +29,7 @@ from pathlib import Path
 # Verificación de dependencias
 # ---------------------------------------------------------------------------
 try:
-    from google import genai
-    from google.genai import types
+    import requests
 except ImportError:
     print("ERROR: Faltan las dependencias del sistema.")
     print("Solucion: haz doble clic en INSTALAR.bat y espera a que termine.")
@@ -73,7 +73,7 @@ ARCHIVO_CONFIG = BASE / "config.txt"
 RUTA_EXCEL_POR_DEFECTO = "salida/comprobantes.xlsx"
 
 # Modelo de Gemini Flash (gratuito, 1500 solicitudes/día, 15/minuto)
-MODELO = "gemini-3.6-flash"
+MODELO = "gemini-2.0-flash"
 
 LADO_MAXIMO = 1568  # px en el lado más largo
 EXTENSIONES = {".jpg", ".jpeg", ".png", ".webp"}
@@ -268,7 +268,7 @@ def leer_api_key():
             if not valor or "PEGA_AQUI" in valor:
                 print("ERROR: Falta configurar la clave de API.")
                 print("Abre config.txt con el Bloc de notas y pega tu clave")
-                print("despues de API_KEY= (la clave empieza con AIza...).")
+                print("despues de API_KEY= (la clave empieza con AIza... o AQ....).")
                 print("Se obtiene gratis en https://aistudio.google.com/apikey")
                 return None
             return valor
@@ -497,31 +497,78 @@ def preparar_imagen(ruta):
     return buffer.getvalue()
 
 
-def extraer_datos(cliente, imagen_bytes):
-    """Envía la imagen a Gemini y devuelve el diccionario con los datos."""
-    respuesta = cliente.models.generate_content(
-        model=MODELO,
-        contents=[
-            types.Content(
-                role="user",
-                parts=[
-                    types.Part.from_bytes(
-                        data=imagen_bytes,
-                        mime_type="image/jpeg",
-                    ),
-                    types.Part.from_text(text=PROMPT),
+URL_GEMINI = (
+    "https://generativelanguage.googleapis.com/v1beta/models/"
+    f"{MODELO}:generateContent"
+)
+TIMEOUT_GEMINI = 120  # segundos
+
+
+class ErrorGemini(Exception):
+    """Error devuelto por la API REST de Gemini (incluye el codigo HTTP)."""
+
+    def __init__(self, status, mensaje):
+        super().__init__(f"HTTP {status}: {mensaje}")
+        self.status = status
+
+
+def extraer_datos(api_key, imagen_bytes):
+    """Envía la imagen a Gemini (API REST directa) y devuelve el diccionario con los datos.
+
+    Se usa requests en vez del SDK google-genai porque las claves nuevas
+    (empiezan con "AQ.") fallan en el SDK con 401 ACCESS_TOKEN_TYPE_UNSUPPORTED.
+    """
+    cuerpo = {
+        "contents": [
+            {
+                "role": "user",
+                "parts": [
+                    {
+                        "inlineData": {
+                            "mimeType": "image/jpeg",
+                            "data": base64.b64encode(imagen_bytes).decode("ascii"),
+                        }
+                    },
+                    {"text": PROMPT},
                 ],
-            )
+            }
         ],
-        config=types.GenerateContentConfig(
-            temperature=0,
+        "generationConfig": {
+            "temperature": 0,
             # El modelo usa tokens de razonamiento que cuentan contra este
             # límite; 600 no alcanza y la respuesta sale cortada (MAX_TOKENS).
-            max_output_tokens=2000,
-            response_mime_type="application/json",
-        ),
+            "maxOutputTokens": 2000,
+            "responseMimeType": "application/json",
+        },
+    }
+    respuesta = requests.post(
+        URL_GEMINI,
+        headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
+        json=cuerpo,
+        timeout=TIMEOUT_GEMINI,
     )
-    texto = respuesta.text or ""
+    try:
+        data = respuesta.json()
+    except ValueError:
+        raise ErrorGemini(respuesta.status_code, "Gemini respondio algo que no es JSON.")
+
+    error = data.get("error") if isinstance(data, dict) else None
+    if error or not respuesta.ok:
+        status = (error or {}).get("code") or respuesta.status_code
+        mensaje = (error or {}).get("message") or f"HTTP {respuesta.status_code}"
+        estado = (error or {}).get("status")
+        if estado:
+            mensaje = f"{mensaje} {estado}"
+        if status in (401, 403):
+            # Texto reconocible por los manejadores de "clave no valida"
+            mensaje = f"API key no valida: {mensaje}"
+        raise ErrorGemini(status, mensaje)
+
+    texto = ""
+    try:
+        texto = data["candidates"][0]["content"]["parts"][0]["text"] or ""
+    except (KeyError, IndexError, TypeError):
+        texto = ""
     if not texto.strip():
         raise ValueError("El modelo devolvio una respuesta vacia.")
     return parsear_json(texto)
@@ -680,8 +727,6 @@ def main():
         print(f"Archivo: {error.ruta}")
         input("\nPresiona ENTER para cerrar...")
         return
-    cliente = genai.Client(api_key=clave)
-
     total_ok = total_revisar = total_error = 0
 
     for indice, archivo in enumerate(imagenes, start=1):
@@ -692,7 +737,7 @@ def main():
         print(f"[{indice}/{total}] {archivo.name} ... ", end="", flush=True)
         try:
             imagen_bytes = preparar_imagen(archivo)
-            datos = extraer_datos(cliente, imagen_bytes)
+            datos = extraer_datos(clave, imagen_bytes)
             estado, motivos = validar(datos, comprobantes_existentes)
             fila = construir_fila(archivo, datos, estado)
             # Se guarda antes de mover la imagen: si falla, la imagen sigue en "entrada"
@@ -737,7 +782,7 @@ def main():
                 # Reintentar esta imagen
                 try:
                     imagen_bytes = preparar_imagen(archivo)
-                    datos = extraer_datos(cliente, imagen_bytes)
+                    datos = extraer_datos(clave, imagen_bytes)
                     estado, motivos = validar(datos, comprobantes_existentes)
                     fila = construir_fila(archivo, datos, estado)
                     agregar_y_guardar(fila, ruta_excel)

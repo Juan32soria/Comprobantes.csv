@@ -34,7 +34,7 @@
 ### ¿Cómo obtener la clave de API? (gratis)
 1. Entrar a https://aistudio.google.com/apikey con una cuenta de Google
 2. Clic en "Create API Key"
-3. Copiar la clave (empieza con AIza...)
+3. Copiar la clave (empieza con AIza... o AQ....)
 4. No necesita tarjeta de crédito
 
 ---
@@ -198,7 +198,7 @@ Hay **dos formas** de tener el sistema funcionando, según el computador:
 
 > 🔑 1. Entrar a **https://aistudio.google.com/apikey** con una cuenta de Google (Gmail)
 > 2. Clic en **"Create API Key"**
-> 3. Copiar la clave (empieza con `AIza...`)
+> 3. Copiar la clave (empieza con `AIza...` o `AQ....`)
 
 #### 4️⃣ Configurar la clave
 
