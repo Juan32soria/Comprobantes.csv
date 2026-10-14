@@ -1,7 +1,7 @@
 // Tipos y lógica pura de validación/construcción de filas.
 // Portado de procesar_comprobantes.py (parsear_json, validar, construir_fila, ...).
 
-export const MODELO = "gemini-2.0-flash";
+export const MODELO = "gemini-3.8-flash";
 export const LADO_MAXIMO = 1568; // px en el lado más largo
 
 export const COLUMNAS = [

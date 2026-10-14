@@ -73,7 +73,7 @@ ARCHIVO_CONFIG = BASE / "config.txt"
 RUTA_EXCEL_POR_DEFECTO = "salida/comprobantes.xlsx"
 
 # Modelo de Gemini Flash (gratuito, 1500 solicitudes/día, 15/minuto)
-MODELO = "gemini-2.0-flash"
+MODELO = "gemini-3.8-flash"
 
 LADO_MAXIMO = 1568  # px en el lado más largo
 EXTENSIONES = {".jpg", ".jpeg", ".png", ".webp"}
