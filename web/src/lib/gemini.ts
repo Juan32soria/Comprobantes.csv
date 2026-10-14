@@ -79,9 +79,9 @@ async function llamarModelo(modelo: string, clave: string, imagenJpegBuffer: Buf
       ],
       generationConfig: {
         temperature: 0,
-        // El modelo gasta tokens de razonamiento contra este límite; con menos
-        // la respuesta sale cortada (MAX_TOKENS).
-        maxOutputTokens: 2000,
+        // flash-lite no razona internamente: 500 tokens sobran para el JSON
+        // de respuesta y gastan menos cuota.
+        maxOutputTokens: 500,
         responseMimeType: "application/json",
       },
     }),

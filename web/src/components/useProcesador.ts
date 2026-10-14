@@ -11,6 +11,13 @@ import type {
 } from "./tipos";
 import { HEADER_CLAVE } from "./useClaveApi";
 
+/** Pausa tras cada imagen procesada con éxito, para no agotar la cuota por minuto de Gemini. */
+const PAUSA_ENTRE_IMAGENES_MS = 5000;
+
+function esperar(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function generarId(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -151,6 +158,13 @@ export function useProcesador(alTerminar?: () => void, claveApi = "") {
       }
       conteo.procesados++;
       setResultados((prev) => [resultado, ...prev]);
+
+      // Tras un éxito, esperar antes de la siguiente imagen (no después de la última
+      // ni si el usuario pidió detener).
+      const quedanMas = i < pendientes.length - 1;
+      if (resultado.tipo === "exito" && quedanMas && !cancelarRef.current) {
+        await esperar(PAUSA_ENTRE_IMAGENES_MS);
+      }
     }
 
     setProgreso(null);

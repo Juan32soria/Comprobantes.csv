@@ -4,7 +4,9 @@
 export const MODELO = "gemini-3.5-flash-lite";
 // Principal: flash-lite (menos tokens, más cuota). Respaldo si responde 503 (saturado): el flash completo.
 export const MODELO_RESPALDO = "gemini-3.8-flash";
-export const LADO_MAXIMO = 1568; // px en el lado más largo
+// 1024 px baja los tokens de entrada casi a la mitad frente a 1568 sin perder
+// precisión para el texto de un comprobante.
+export const LADO_MAXIMO = 1024; // px en el lado más largo
 
 export const COLUMNAS = [
   "fecha_procesado",

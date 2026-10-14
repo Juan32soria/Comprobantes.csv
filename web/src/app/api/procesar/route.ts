@@ -95,7 +95,7 @@ async function leerEntrada(request: Request): Promise<Entrada> {
   );
 }
 
-/** Verifica que sea JPEG/PNG/WebP y la convierte a JPEG RGB de máximo 1568 px. */
+/** Verifica que sea JPEG/PNG/WebP y la convierte a JPEG RGB de máximo LADO_MAXIMO px (1024). */
 async function prepararImagen(entrada: Entrada): Promise<Buffer> {
   let formato: string | undefined;
   try {
