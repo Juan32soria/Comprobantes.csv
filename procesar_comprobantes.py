@@ -74,6 +74,8 @@ RUTA_EXCEL_POR_DEFECTO = "salida/comprobantes.xlsx"
 
 # Modelo de Gemini Flash (gratuito, 1500 solicitudes/día, 15/minuto)
 MODELO = "gemini-3.8-flash"
+# Respaldo si el principal responde 503 (saturado): más ligero, menos demanda
+MODELO_RESPALDO = "gemini-3.5-flash-lite"
 
 LADO_MAXIMO = 1568  # px en el lado más largo
 EXTENSIONES = {".jpg", ".jpeg", ".png", ".webp"}
@@ -497,11 +499,15 @@ def preparar_imagen(ruta):
     return buffer.getvalue()
 
 
-URL_GEMINI = (
-    "https://generativelanguage.googleapis.com/v1beta/models/"
-    f"{MODELO}:generateContent"
-)
+URL_BASE_GEMINI = "https://generativelanguage.googleapis.com/v1beta/models/"
 TIMEOUT_GEMINI = 120  # segundos
+# Reintentos ante 503 (modelo saturado) antes de pasar al modelo de respaldo
+MAX_INTENTOS_503 = 3
+ESPERA_503_SEGUNDOS = 5
+
+
+def url_gemini(modelo):
+    return f"{URL_BASE_GEMINI}{modelo}:generateContent"
 
 
 class ErrorGemini(Exception):
@@ -512,8 +518,8 @@ class ErrorGemini(Exception):
         self.status = status
 
 
-def extraer_datos(api_key, imagen_bytes):
-    """Envía la imagen a Gemini (API REST directa) y devuelve el diccionario con los datos.
+def _llamar_modelo(modelo, api_key, imagen_bytes):
+    """Una sola llamada a generateContent. Devuelve el texto o lanza ErrorGemini.
 
     Se usa requests en vez del SDK google-genai porque las claves nuevas
     (empiezan con "AQ.") fallan en el SDK con 401 ACCESS_TOKEN_TYPE_UNSUPPORTED.
@@ -542,7 +548,7 @@ def extraer_datos(api_key, imagen_bytes):
         },
     }
     respuesta = requests.post(
-        URL_GEMINI,
+        url_gemini(modelo),
         headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
         json=cuerpo,
         timeout=TIMEOUT_GEMINI,
@@ -564,11 +570,47 @@ def extraer_datos(api_key, imagen_bytes):
             mensaje = f"API key no valida: {mensaje}"
         raise ErrorGemini(status, mensaje)
 
-    texto = ""
     try:
-        texto = data["candidates"][0]["content"]["parts"][0]["text"] or ""
+        return data["candidates"][0]["content"]["parts"][0]["text"] or ""
     except (KeyError, IndexError, TypeError):
-        texto = ""
+        return ""
+
+
+def _llamar_con_reintentos(modelo, api_key, imagen_bytes):
+    """Reintenta hasta MAX_INTENTOS_503 veces si el modelo responde 503.
+
+    Cualquier otro error se propaga de inmediato. Si agota los intentos,
+    relanza el ultimo ErrorGemini 503.
+    """
+    ultimo = None
+    for intento in range(1, MAX_INTENTOS_503 + 1):
+        try:
+            return _llamar_modelo(modelo, api_key, imagen_bytes)
+        except ErrorGemini as error:
+            if error.status != 503:
+                raise
+            ultimo = error
+            if intento < MAX_INTENTOS_503:
+                time.sleep(ESPERA_503_SEGUNDOS)
+    raise ultimo
+
+
+def extraer_datos(api_key, imagen_bytes):
+    """Envía la imagen a Gemini (API REST directa) y devuelve el diccionario con los datos.
+
+    Orden: MODELO con reintentos ante 503; si sigue saturado, MODELO_RESPALDO
+    con los mismos reintentos. Si ambos fallan se propaga el ultimo 503.
+    """
+    modelos = [MODELO, MODELO_RESPALDO]
+    texto = ""
+    for indice, modelo in enumerate(modelos):
+        try:
+            texto = _llamar_con_reintentos(modelo, api_key, imagen_bytes)
+            break
+        except ErrorGemini as error:
+            es_ultimo = indice == len(modelos) - 1
+            if es_ultimo or error.status != 503:
+                raise
     if not texto.strip():
         raise ValueError("El modelo devolvio una respuesta vacia.")
     return parsear_json(texto)

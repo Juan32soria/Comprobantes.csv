@@ -3,13 +3,19 @@
 // Se usa la API REST directamente con fetch (no el SDK @google/genai): las
 // claves nuevas de Gemini empiezan con "AQ." y el SDK las rechaza con
 // 401 ACCESS_TOKEN_TYPE_UNSUPPORTED. El endpoint REST acepta ambas.
-import { MODELO, parsearJson, type DatosExtraidos } from "@/lib/comprobantes";
+import { MODELO, MODELO_RESPALDO, parsearJson, type DatosExtraidos } from "@/lib/comprobantes";
 import { PROMPT } from "@/lib/prompt";
 
 /** Header opcional con el que el frontend envía la clave guardada en el navegador. */
 export const HEADER_CLAVE = "x-gemini-key";
 
-const URL_GENERATE = `https://generativelanguage.googleapis.com/v1beta/models/${MODELO}:generateContent`;
+/** Reintentos ante 503 (modelo saturado) antes de pasar al modelo de respaldo. */
+const MAX_INTENTOS_503 = 3;
+const ESPERA_503_MS = 5000;
+
+function urlGenerate(modelo: string): string {
+  return `https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent`;
+}
 
 /** Error devuelto por la API de Gemini; `status` permite traducirlo en errores.ts. */
 export class ErrorGemini extends Error {
@@ -49,14 +55,13 @@ type RespuestaGemini = {
   error?: { code?: number; message?: string; status?: string };
 };
 
-/** Envía la imagen JPEG a Gemini y devuelve los datos ya parseados. */
-export async function extraerDatos(imagenJpegBuffer: Buffer, apiKey: string): Promise<DatosExtraidos> {
-  const clave = apiKey.trim();
-  if (!clave) {
-    throw new Error("No hay clave de API configurada.");
-  }
+function esperar(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
-  const response = await fetch(URL_GENERATE, {
+/** Una sola llamada a generateContent. Devuelve el texto o lanza ErrorGemini. */
+async function llamarModelo(modelo: string, clave: string, imagenJpegBuffer: Buffer): Promise<string> {
+  const response = await fetch(urlGenerate(modelo), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -95,7 +100,54 @@ export async function extraerDatos(imagenJpegBuffer: Buffer, apiKey: string): Pr
     throw new ErrorGemini(data.error?.code ?? response.status, `${mensaje}${estado}`);
   }
 
-  const texto = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+  return data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+}
+
+/**
+ * Llama al modelo reintentando hasta MAX_INTENTOS_503 veces si responde 503
+ * (saturado), con una pausa entre intentos. Cualquier otro error se propaga
+ * de inmediato. Si agota los intentos, lanza el último ErrorGemini 503.
+ */
+async function llamarConReintentos(modelo: string, clave: string, imagen: Buffer): Promise<string> {
+  let ultimo: ErrorGemini | null = null;
+  for (let intento = 1; intento <= MAX_INTENTOS_503; intento++) {
+    try {
+      return await llamarModelo(modelo, clave, imagen);
+    } catch (error) {
+      if (!(error instanceof ErrorGemini) || error.status !== 503) throw error;
+      ultimo = error;
+      console.warn(`[gemini] ${modelo} saturado (503), intento ${intento}/${MAX_INTENTOS_503}`);
+      if (intento < MAX_INTENTOS_503) await esperar(ESPERA_503_MS);
+    }
+  }
+  throw ultimo ?? new ErrorGemini(503, "Modelo saturado.");
+}
+
+/**
+ * Envía la imagen JPEG a Gemini y devuelve los datos ya parseados.
+ * Orden: MODELO con reintentos ante 503; si sigue saturado, MODELO_RESPALDO
+ * (más ligero, suele tener menos demanda) con los mismos reintentos.
+ */
+export async function extraerDatos(imagenJpegBuffer: Buffer, apiKey: string): Promise<DatosExtraidos> {
+  const clave = apiKey.trim();
+  if (!clave) {
+    throw new Error("No hay clave de API configurada.");
+  }
+
+  const modelos = [MODELO, MODELO_RESPALDO];
+  let texto = "";
+  for (let i = 0; i < modelos.length; i++) {
+    const modelo = modelos[i];
+    try {
+      texto = await llamarConReintentos(modelo, clave, imagenJpegBuffer);
+      break;
+    } catch (error) {
+      const esUltimo = i === modelos.length - 1;
+      if (esUltimo || !(error instanceof ErrorGemini) || error.status !== 503) throw error;
+      console.warn(`[gemini] ${modelo} sigue saturado; se intenta con ${modelos[i + 1]}`);
+    }
+  }
+
   if (!texto.trim()) {
     throw new Error("El modelo devolvió una respuesta vacía.");
   }
