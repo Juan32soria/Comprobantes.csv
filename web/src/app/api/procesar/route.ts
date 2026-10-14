@@ -3,7 +3,7 @@
 import sharp from "sharp";
 import { construirFila, LADO_MAXIMO, validar, type Fila } from "@/lib/comprobantes";
 import { ErrorEntrada, mensajeErrorGemini, mensajeErrorSheets } from "@/lib/errores";
-import { extraerDatos, geminiConfigurado } from "@/lib/gemini";
+import { extraerDatos, resolverClave } from "@/lib/gemini";
 import {
   agregarFila,
   comprobantesExistentes,
@@ -137,18 +137,16 @@ export async function POST(request: Request): Promise<Response> {
     return json({ ok: false, error: "No se pudo leer la imagen enviada." }, 400);
   }
 
-  // 2. Configuración de Gemini
-  if (!geminiConfigurado()) {
-    return json(
-      { ok: false, error: "El administrador debe configurar la clave de API en Vercel (variable GEMINI_API_KEY)." },
-      500,
-    );
+  // 2. Clave de Gemini: GEMINI_API_KEY del entorno tiene prioridad; si no, el header x-gemini-key.
+  const apiKey = resolverClave(request);
+  if (!apiKey) {
+    return json({ ok: false, error: "No hay clave de API configurada" }, 500);
   }
 
   // 3. Extracción con Gemini
   let datos;
   try {
-    datos = await extraerDatos(imagenJpeg);
+    datos = await extraerDatos(imagenJpeg, apiKey);
   } catch (error) {
     console.error("[procesar] error de Gemini:", error);
     return json({ ok: false, error: mensajeErrorGemini(error) }, 500);

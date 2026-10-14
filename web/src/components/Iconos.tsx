@@ -80,3 +80,17 @@ export function IconoDocumento({ className = "h-6 w-6" }: PropsIcono) {
     </svg>
   );
 }
+
+export function IconoEditar({ className = "h-4 w-4" }: PropsIcono) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3zM13.5 6.5l3 3"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}

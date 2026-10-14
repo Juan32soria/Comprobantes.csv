@@ -9,6 +9,7 @@ import type {
   Resultado,
   Resumen,
 } from "./tipos";
+import { HEADER_CLAVE } from "./useClaveApi";
 
 function generarId(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
@@ -24,15 +25,20 @@ function esRespuesta(valor: unknown): valor is RespuestaProcesar {
   return typeof valor === "object" && valor !== null && "ok" in valor;
 }
 
-/** Envía UNA imagen a POST /api/procesar y traduce cualquier fallo a un Resultado. */
-async function enviarArchivo(archivo: ArchivoEnCola): Promise<Resultado> {
+/**
+ * Envía UNA imagen a POST /api/procesar y traduce cualquier fallo a un Resultado.
+ * Si hay clave guardada en el navegador se manda en el header x-gemini-key;
+ * el servidor la ignora cuando tiene su propia GEMINI_API_KEY.
+ */
+async function enviarArchivo(archivo: ArchivoEnCola, claveApi: string): Promise<Resultado> {
   const base = { id: archivo.id, archivo: archivo.file.name };
   const formData = new FormData();
   formData.append("archivo", archivo.file);
+  const headers: HeadersInit = claveApi ? { [HEADER_CLAVE]: claveApi } : {};
 
   let res: Response;
   try {
-    res = await fetch("/api/procesar", { method: "POST", body: formData });
+    res = await fetch("/api/procesar", { method: "POST", body: formData, headers });
   } catch {
     return { ...base, tipo: "error", error: "No se pudo conectar con el servidor." };
   }
@@ -59,8 +65,11 @@ async function enviarArchivo(archivo: ArchivoEnCola): Promise<Resultado> {
   };
 }
 
-/** Maneja la cola de archivos y el envío secuencial al API. */
-export function useProcesador(alTerminar?: () => void) {
+/**
+ * Maneja la cola de archivos y el envío secuencial al API.
+ * `claveApi` es la clave guardada en el navegador ("" si no hay).
+ */
+export function useProcesador(alTerminar?: () => void, claveApi = "") {
   const [archivos, setArchivos] = useState<ArchivoEnCola[]>([]);
   const [resultados, setResultados] = useState<Resultado[]>([]);
   const [progreso, setProgreso] = useState<Progreso | null>(null);
@@ -129,7 +138,7 @@ export function useProcesador(alTerminar?: () => void) {
       setProgreso({ indice: i + 1, total: pendientes.length, nombre: actual.file.name });
       actualizarEstado(actual.id, "procesando");
 
-      const resultado = await enviarArchivo(actual);
+      const resultado = await enviarArchivo(actual, claveApi);
 
       if (resultado.tipo === "exito") {
         const esOk = resultado.datos.estado === "OK";
@@ -150,7 +159,7 @@ export function useProcesador(alTerminar?: () => void) {
     setDeteniendo(false);
     cancelarRef.current = false;
     alTerminar?.();
-  }, [archivos, procesando, actualizarEstado, alTerminar]);
+  }, [archivos, procesando, actualizarEstado, alTerminar, claveApi]);
 
   /** Pide detener el lote. La imagen en curso termina y se guarda; el resto queda pendiente. */
   const detener = useCallback(() => {

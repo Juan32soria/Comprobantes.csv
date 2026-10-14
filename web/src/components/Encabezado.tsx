@@ -1,5 +1,6 @@
 import type { Configurado } from "./tipos";
 import { Chip, type Tono } from "./Chip";
+import { ClaveApi } from "./ClaveApi";
 import { IconoDocumento, IconoExterno, Spinner } from "./Iconos";
 
 type Props = {
@@ -7,19 +8,22 @@ type Props = {
   cargando: boolean;
   errorCarga: boolean;
   sheetUrl: string | null;
+  /** Clave guardada en el navegador (solo se usa si el servidor no tiene la suya). */
+  claveLocal: string;
+  /** True cuando ya se leyó localStorage (evita parpadeos al cargar). */
+  claveLista: boolean;
+  onGuardarClave: (clave: string) => void;
+  onBorrarClave: () => void;
 };
 
-/** Texto y tono del indicador de conexión según la configuración del servidor. */
-function describirEstado({ configurado, cargando, errorCarga }: Props): { tono: Tono; texto: string } {
+type EstadoChip = { tono: Tono; texto: string };
+
+/** Chip de Google Sheets según la configuración del servidor. */
+function estadoSheets({ configurado, cargando, errorCarga }: Props): EstadoChip {
   if (configurado) {
-    if (configurado.gemini && configurado.sheets) {
-      return { tono: "ok", texto: "Conectado a Google Sheets" };
-    }
-    if (!configurado.gemini && !configurado.sheets) {
-      return { tono: "alerta", texto: "Falta clave de API y Google Sheets: el administrador debe configurarlas en Vercel" };
-    }
-    if (!configurado.gemini) return { tono: "alerta", texto: "El administrador debe configurar la clave de API en Vercel" };
-    return { tono: "alerta", texto: "El administrador debe configurar Google Sheets en Vercel" };
+    return configurado.sheets
+      ? { tono: "ok", texto: "Conectado a Google Sheets" }
+      : { tono: "alerta", texto: "El administrador debe configurar Google Sheets en Vercel" };
   }
   if (!cargando && errorCarga) {
     return { tono: "alerta", texto: "No se pudo verificar la configuración" };
@@ -35,9 +39,32 @@ const puntoPorTono: Record<Tono, string> = {
   info: "bg-info",
 };
 
+function ChipEstado({
+  estado,
+  verificando,
+  title,
+}: {
+  estado: EstadoChip;
+  verificando: boolean;
+  title: string;
+}) {
+  return (
+    <Chip tono={estado.tono} className="px-2.5 py-1" title={title}>
+      {verificando ? (
+        <Spinner className="h-3 w-3" />
+      ) : (
+        <span aria-hidden="true" className={`h-2 w-2 rounded-full ${puntoPorTono[estado.tono]}`} />
+      )}
+      <span role="status">{estado.texto}</span>
+    </Chip>
+  );
+}
+
 export function Encabezado(props: Props) {
-  const estado = describirEstado(props);
+  const sheets = estadoSheets(props);
   const verificando = props.cargando && !props.configurado;
+  // null mientras no se sepa qué tiene el servidor: entonces no se muestra nada de la clave.
+  const servidorConClave = props.configurado?.gemini ?? null;
 
   return (
     <header className="border-b border-borde bg-superficie/60">
@@ -60,14 +87,22 @@ export function Encabezado(props: Props) {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <Chip tono={estado.tono} className="px-2.5 py-1" title="Estado de la configuración del servidor">
-            {verificando ? (
-              <Spinner className="h-3 w-3" />
-            ) : (
-              <span aria-hidden="true" className={`h-2 w-2 rounded-full ${puntoPorTono[estado.tono]}`} />
-            )}
-            <span role="status">{estado.texto}</span>
-          </Chip>
+          {servidorConClave === true && (
+            <ChipEstado
+              estado={{ tono: "ok", texto: "API configurada por el administrador" }}
+              verificando={false}
+              title="La clave de Gemini está en las variables de entorno de Vercel"
+            />
+          )}
+          {servidorConClave === false && props.claveLista && (
+            <ClaveApi
+              clave={props.claveLocal}
+              onGuardar={props.onGuardarClave}
+              onBorrar={props.onBorrarClave}
+            />
+          )}
+
+          <ChipEstado estado={sheets} verificando={verificando} title="Estado de Google Sheets en el servidor" />
 
           {props.sheetUrl ? (
             <a
