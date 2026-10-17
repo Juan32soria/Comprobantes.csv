@@ -147,6 +147,7 @@ try:
         RUTA_EXCEL_POR_DEFECTO,
         ExcelBloqueadoError,
         agregar_y_guardar,
+        ahora_colombia,
         cargar_comprobantes_existentes,
         construir_fila,
         crear_carpetas,
@@ -555,7 +556,7 @@ def leer_historial_excel(ruta, limite=LIMITE_HISTORIAL):
     finally:
         libro.close()
 
-    hoy = datetime.now().strftime("%Y-%m-%d")
+    hoy = ahora_colombia().strftime("%Y-%m-%d")
     total = len(registros)
     procesados_hoy = sum(
         1 for _posicion, registro in registros

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { fetchAutenticado } from "./fetchAutenticado";
 import type { Configurado, Fila, RespuestaHistorial } from "./tipos";
 
 export type DatosHistorial = {
@@ -10,8 +11,12 @@ export type DatosHistorial = {
   configurado: Configurado;
 };
 
-/** Carga GET /api/historial y permite recargarlo bajo demanda. */
-export function useHistorial(limite = 20) {
+/**
+ * Carga GET /api/historial y permite recargarlo bajo demanda.
+ * No hace ninguna petición mientras no haya `token`; si el servidor responde 401
+ * llama a `alNoAutorizado` (cierra la sesión) y no muestra error en la tabla.
+ */
+export function useHistorial(limite = 20, token = "", alNoAutorizado?: () => void) {
   const [datos, setDatos] = useState<DatosHistorial | null>(null);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -19,10 +24,17 @@ export function useHistorial(limite = 20) {
   const peticionRef = useRef(0);
 
   const recargar = useCallback(async () => {
+    if (!token) return;
     const numero = ++peticionRef.current;
     setCargando(true);
     try {
-      const res = await fetch(`/api/historial?limite=${limite}`, { cache: "no-store" });
+      const res = await fetchAutenticado(
+        `/api/historial?limite=${limite}`,
+        { cache: "no-store" },
+        token,
+        alNoAutorizado,
+      );
+      if (res.status === 401) return; // la sesión ya se cerró; la página vuelve al login
       const json = (await res.json()) as RespuestaHistorial;
       if (numero !== peticionRef.current) return;
       if (!json.ok) {
@@ -42,7 +54,7 @@ export function useHistorial(limite = 20) {
     } finally {
       if (numero === peticionRef.current) setCargando(false);
     }
-  }, [limite]);
+  }, [limite, token, alNoAutorizado]);
 
   useEffect(() => {
     void recargar();

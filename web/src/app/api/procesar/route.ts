@@ -1,6 +1,7 @@
 // POST /api/procesar: recibe una imagen de comprobante, la analiza con Gemini,
 // valida los datos y agrega la fila a Google Sheets.
 import sharp from "sharp";
+import { exigirAuth } from "@/lib/auth";
 import { construirFila, LADO_MAXIMO, validar, type Fila } from "@/lib/comprobantes";
 import { ErrorEntrada, mensajeErrorGemini, mensajeErrorSheets } from "@/lib/errores";
 import { extraerDatos, resolverClave } from "@/lib/gemini";
@@ -124,6 +125,10 @@ async function prepararImagen(entrada: Entrada): Promise<Buffer> {
 }
 
 export async function POST(request: Request): Promise<Response> {
+  // 0. Sesión: sin token válido no se procesa nada.
+  const noAuth = await exigirAuth(request);
+  if (noAuth) return noAuth;
+
   // 1. Entrada e imagen
   let imagenJpeg: Buffer;
   let nombreArchivo: string;

@@ -35,6 +35,11 @@ export type RespuestaHistorial =
     }
   | { ok: false; error: string };
 
+/** Respuesta de POST /api/login. `expiraEn` son segundos de validez del token. */
+export type RespuestaLogin =
+  | { ok: true; token: string; expiraEn: number }
+  | { ok: false; error: string };
+
 /** Estado de cada archivo dentro de la cola de la interfaz. */
 export type EstadoArchivo = "pendiente" | "procesando" | "ok" | "revisar" | "error";
 

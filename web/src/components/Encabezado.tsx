@@ -1,7 +1,7 @@
 import type { Configurado } from "./tipos";
 import { Chip, type Tono } from "./Chip";
 import { ClaveApi } from "./ClaveApi";
-import { IconoDocumento, IconoExterno, Spinner } from "./Iconos";
+import { IconoDocumento, IconoExterno, IconoSalir, Spinner } from "./Iconos";
 
 type Props = {
   configurado: Configurado | null;
@@ -14,6 +14,8 @@ type Props = {
   claveLista: boolean;
   onGuardarClave: (clave: string) => void;
   onBorrarClave: () => void;
+  /** Cierra la sesión (borra el token) y vuelve a la pantalla de login. */
+  onCerrarSesion: () => void;
 };
 
 type EstadoChip = { tono: Tono; texto: string };
@@ -125,6 +127,16 @@ export function Encabezado(props: Props) {
               Abrir Google Sheet
             </button>
           )}
+
+          <button
+            type="button"
+            onClick={props.onCerrarSesion}
+            title="Cerrar la sesión en este navegador"
+            className="inline-flex items-center gap-1.5 rounded-md border border-borde bg-superficie-2 px-3 py-1.5 text-sm font-medium text-texto transition-colors hover:border-apagado hover:bg-borde/60"
+          >
+            <IconoSalir />
+            Cerrar sesión
+          </button>
         </div>
       </div>
     </header>

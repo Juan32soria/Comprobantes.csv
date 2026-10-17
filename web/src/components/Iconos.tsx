@@ -81,6 +81,20 @@ export function IconoDocumento({ className = "h-6 w-6" }: PropsIcono) {
   );
 }
 
+export function IconoSalir({ className = "h-4 w-4" }: PropsIcono) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M10 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4M15 8l5 4-5 4M20 12H9"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 export function IconoEditar({ className = "h-4 w-4" }: PropsIcono) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden="true">

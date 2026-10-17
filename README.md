@@ -51,7 +51,7 @@ Además de la app de escritorio, el repositorio trae una **versión web** en la 
 >
 > 3️⃣ En **"Root Directory"** dar clic en **Edit** y seleccionar la carpeta **`web`** (muy importante: el proyecto Next.js vive ahí, no en la raíz)
 >
-> 4️⃣ En **"Environment Variables"** agregar las tres variables de la tabla de abajo
+> 4️⃣ En **"Environment Variables"** agregar las cinco variables de la tabla de abajo
 >
 > 5️⃣ Clic en **Deploy**. En uno o dos minutos Vercel entrega una URL tipo `https://comprobantes.vercel.app`
 >
@@ -64,8 +64,10 @@ Además de la app de escritorio, el repositorio trae una **versión web** en la 
 | `GEMINI_API_KEY` | Clave de la API de Gemini (la misma de la app de escritorio) | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
 | `GOOGLE_SHEETS_ID` | ID del Google Sheet donde se guardan los comprobantes | Es la parte larga de la URL del Sheet: `https://docs.google.com/spreadsheets/d/`**`ESTE_ID`**`/edit` |
 | `GOOGLE_SERVICE_ACCOUNT` | **Todo el JSON** de la cuenta de servicio de Google, pegado en una sola línea | Ver pasos abajo |
+| `APP_PASSWORD` | Contraseña con la que el equipo entra a la web | La elige el administrador. Se recomienda larga y difícil de adivinar |
+| `JWT_SECRET` | Cadena secreta larga y aleatoria con la que se firman las sesiones | Generar una al azar, por ejemplo: `openssl rand -hex 32` o cualquier generador de contraseñas (mínimo 32 caracteres) |
 
-> 📝 Para probar en local: copiar `web/.env.example` como `web/.env.local`, llenar las tres variables y ejecutar `npm install` y `npm run dev` dentro de `web/`. El archivo `.env.local` está en `.gitignore` y **no se sube** al repositorio.
+> 📝 Para probar en local: copiar `web/.env.example` como `web/.env.local`, llenar las cinco variables y ejecutar `npm install` y `npm run dev` dentro de `web/`. El archivo `.env.local` está en `.gitignore` y **no se sube** al repositorio.
 
 #### 🤖 Crear la cuenta de servicio de Google (para que la web pueda escribir en el Sheet)
 
@@ -94,6 +96,16 @@ Además de la app de escritorio, el repositorio trae una **versión web** en la 
 - Desde la web hay un botón **"Abrir Google Sheet"** que lleva directo a la hoja, y una tabla de **historial** con los últimos comprobantes.
 
 > 🔢 La web usa el mismo plan gratuito de Gemini (1.500 comprobantes al día). Las imágenes se envían **una por una**, así que un lote de 50 fotos tarda unos minutos: hay que dejar la pestaña abierta hasta que termine.
+
+### 🔒 Seguridad
+
+- La web **pide contraseña** antes de dejar subir o ver comprobantes. Sin ella no se puede usar ni el formulario ni el historial, y las rutas del API (`/api/procesar`, `/api/historial`) responden **401** si no llega una sesión válida.
+- La contraseña **la configura el administrador** en Vercel con la variable `APP_PASSWORD`. Es una sola para todo el equipo; para cambiarla basta con editar la variable en Vercel y volver a desplegar.
+- Al entrar correctamente, el navegador recibe un **token firmado** (JWT, firmado con `JWT_SECRET`) que se guarda en el dispositivo. La **sesión dura 24 horas**: pasado ese tiempo la web vuelve a pedir la contraseña.
+- El botón **"Cerrar sesión"** del encabezado borra el token del navegador de inmediato.
+- El servidor nunca compara la contraseña en texto plano: compara **hashes** de forma segura.
+
+> ⚠️ Si al abrir la web sale el mensaje **"El administrador debe configurar APP_PASSWORD y JWT_SECRET en Vercel"**, faltan esas dos variables en el proyecto de Vercel.
 
 ---
 

@@ -9,6 +9,7 @@ import type {
   Resultado,
   Resumen,
 } from "./tipos";
+import { fetchAutenticado } from "./fetchAutenticado";
 import { HEADER_CLAVE } from "./useClaveApi";
 
 /** Pausa tras cada imagen procesada con éxito, para no agotar la cuota por minuto de Gemini. */
@@ -34,10 +35,17 @@ function esRespuesta(valor: unknown): valor is RespuestaProcesar {
 
 /**
  * Envía UNA imagen a POST /api/procesar y traduce cualquier fallo a un Resultado.
- * Si hay clave guardada en el navegador se manda en el header x-gemini-key;
- * el servidor la ignora cuando tiene su propia GEMINI_API_KEY.
+ * Siempre va con el token de sesión (Authorization: Bearer). Si hay clave guardada
+ * en el navegador se manda además en el header x-gemini-key; el servidor la ignora
+ * cuando tiene su propia GEMINI_API_KEY.
+ * Ante un 401 se llama a `alNoAutorizado` y el resultado es "Sesión expirada".
  */
-async function enviarArchivo(archivo: ArchivoEnCola, claveApi: string): Promise<Resultado> {
+async function enviarArchivo(
+  archivo: ArchivoEnCola,
+  claveApi: string,
+  token: string,
+  alNoAutorizado?: () => void,
+): Promise<Resultado> {
   const base = { id: archivo.id, archivo: archivo.file.name };
   const formData = new FormData();
   formData.append("archivo", archivo.file);
@@ -45,9 +53,17 @@ async function enviarArchivo(archivo: ArchivoEnCola, claveApi: string): Promise<
 
   let res: Response;
   try {
-    res = await fetch("/api/procesar", { method: "POST", body: formData, headers });
+    res = await fetchAutenticado(
+      "/api/procesar",
+      { method: "POST", body: formData, headers },
+      token,
+      alNoAutorizado,
+    );
   } catch {
     return { ...base, tipo: "error", error: "No se pudo conectar con el servidor." };
+  }
+  if (res.status === 401) {
+    return { ...base, tipo: "error", error: "Sesión expirada. Vuelve a iniciar sesión." };
   }
 
   let json: unknown;
@@ -75,8 +91,15 @@ async function enviarArchivo(archivo: ArchivoEnCola, claveApi: string): Promise<
 /**
  * Maneja la cola de archivos y el envío secuencial al API.
  * `claveApi` es la clave guardada en el navegador ("" si no hay).
+ * `token` es el JWT de la sesión; si el servidor responde 401 se detiene el lote
+ * (los archivos restantes quedan pendientes) y se llama a `alNoAutorizado`.
  */
-export function useProcesador(alTerminar?: () => void, claveApi = "") {
+export function useProcesador(
+  alTerminar?: () => void,
+  claveApi = "",
+  token = "",
+  alNoAutorizado?: () => void,
+) {
   const [archivos, setArchivos] = useState<ArchivoEnCola[]>([]);
   const [resultados, setResultados] = useState<Resultado[]>([]);
   const [progreso, setProgreso] = useState<Progreso | null>(null);
@@ -134,6 +157,13 @@ export function useProcesador(alTerminar?: () => void, claveApi = "") {
       detenido: false,
     };
 
+    // Si la sesión venció a mitad del lote, se corta como si el usuario hubiera pedido
+    // detener (para no disparar decenas de peticiones fallidas) y se cierra la sesión.
+    const sesionVencida = () => {
+      cancelarRef.current = true;
+      alNoAutorizado?.();
+    };
+
     // Secuencial a propósito: la capa gratuita de Gemini limita las peticiones por minuto.
     for (let i = 0; i < pendientes.length; i++) {
       // Si el usuario pidió detener, los archivos restantes quedan "pendiente" para después.
@@ -145,7 +175,7 @@ export function useProcesador(alTerminar?: () => void, claveApi = "") {
       setProgreso({ indice: i + 1, total: pendientes.length, nombre: actual.file.name });
       actualizarEstado(actual.id, "procesando");
 
-      const resultado = await enviarArchivo(actual, claveApi);
+      const resultado = await enviarArchivo(actual, claveApi, token, sesionVencida);
 
       if (resultado.tipo === "exito") {
         const esOk = resultado.datos.estado === "OK";
@@ -173,7 +203,7 @@ export function useProcesador(alTerminar?: () => void, claveApi = "") {
     setDeteniendo(false);
     cancelarRef.current = false;
     alTerminar?.();
-  }, [archivos, procesando, actualizarEstado, alTerminar, claveApi]);
+  }, [archivos, procesando, actualizarEstado, alTerminar, claveApi, token, alNoAutorizado]);
 
   /** Pide detener el lote. La imagen en curso termina y se guarda; el resto queda pendiente. */
   const detener = useCallback(() => {

@@ -22,8 +22,31 @@ import re
 import shutil
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+# ---------------------------------------------------------------------------
+# Hora de Colombia (America/Bogota, UTC-5, sin horario de verano)
+# ---------------------------------------------------------------------------
+# fecha_procesado se registra siempre en hora de Colombia, sin importar la
+# zona horaria del PC. Si falta la base de datos IANA (Windows sin el paquete
+# tzdata), se usa el desfase fijo -5, que es exacto porque Colombia no cambia
+# de hora.
+def _zona_colombia():
+    try:
+        from zoneinfo import ZoneInfo
+        return ZoneInfo("America/Bogota")
+    except Exception:
+        return timezone(timedelta(hours=-5), name="America/Bogota")
+
+
+ZONA_COLOMBIA = _zona_colombia()
+
+
+def ahora_colombia():
+    """Fecha y hora actual en Colombia (con zona horaria)."""
+    return datetime.now(ZONA_COLOMBIA)
+
 
 # ---------------------------------------------------------------------------
 # Verificación de dependencias
@@ -701,7 +724,7 @@ def validar(datos, comprobantes_existentes):
 def construir_fila(archivo, datos, estado):
     valor = normalizar_valor(datos.get("valor_pago"))
     return {
-        "fecha_procesado": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "fecha_procesado": ahora_colombia().strftime("%Y-%m-%d %H:%M"),
         "archivo_origen": archivo.name,
         "banco_app": limpiar_texto(datos.get("banco_app")),
         "numero_comprobante": limpiar_texto(datos.get("numero_comprobante")),
@@ -717,7 +740,7 @@ def construir_fila(archivo, datos, estado):
 def mover_imagen(archivo, destino_dir):
     destino = destino_dir / archivo.name
     if destino.exists():
-        marca = datetime.now().strftime("%Y%m%d%H%M%S")
+        marca = ahora_colombia().strftime("%Y%m%d%H%M%S")
         destino = destino_dir / f"{archivo.stem}_{marca}{archivo.suffix}"
     shutil.move(str(archivo), str(destino))
 

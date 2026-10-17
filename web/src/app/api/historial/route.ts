@@ -1,4 +1,5 @@
 // GET /api/historial?limite=20: últimas filas registradas en Google Sheets.
+import { exigirAuth } from "@/lib/auth";
 import type { Fila } from "@/lib/comprobantes";
 import { mensajeErrorSheets } from "@/lib/errores";
 import {
@@ -32,6 +33,9 @@ function leerLimite(request: Request): number {
 }
 
 export async function GET(request: Request): Promise<Response> {
+  const noAuth = await exigirAuth(request);
+  if (noAuth) return noAuth;
+
   const limite = leerLimite(request);
   const configurado = configuracion();
 
